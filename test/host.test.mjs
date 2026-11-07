@@ -268,3 +268,64 @@ test('Yuanbao accepts a service API KEY as Bearer', async t => {
   assert.match(out.text, /https:\/\/qq\.com\/a/)
   assert.equal(calls[0].headers.authorization, 'Bearer sk-wsa-key')
 })
+
+test('a volatile settings update rebuilds tool names and the skill text without a remount', async t => {
+  const { Context } = await import('@deepseek-ai/cordis')
+  const { SystemPrompt } = await import('@deepseek-ai/dsh-system-prompt')
+  const { ToolRuntime } = await import('@deepseek-ai/dsh-tools')
+  const Plugin = await import('../lib/index.js')
+  const ctx = new Context()
+  t.after(() => ctx.fiber.dispose())
+  new SystemPrompt(ctx, { includeHarnessIdentity: false, includeRuntimeContext: false })
+  new ToolRuntime(ctx)
+  const skills = []
+  ctx.provide('skills'); ctx.set('skills', { register: skill => { skills.push(skill); return () => { skills.splice(skills.indexOf(skill), 1) } } })
+  // Stand-ins for the loader's volatile references.
+  const values = Plugin.snapshotConfig(Plugin.Config({}))
+  const raw = Object.fromEntries(Object.keys(values).map(key => [key, { get: () => values[key] }]))
+  await (await ctx.plugin({ name: 'wrap', inject: ['tools', 'systemPrompt'], apply: child => Plugin.apply(child, raw) })).await()
+  assert.ok(ctx.tools.get('search'))
+  assert.match(skills[0].content, /at most \*\*3\*\* running/)
+  values.tools = { ...values.tools, searchName: 'web_lookup' }
+  values.research = { ...values.research, maxSubagents: 5 }
+  ctx.emit('loader/volatile-update', ['tools', 'research'])
+  assert.equal(ctx.tools.get('search'), undefined)
+  assert.ok(ctx.tools.get('web_lookup'))
+  assert.ok(ctx.tools.get('fetch'))
+  assert.equal(skills.length, 1)
+  assert.match(skills[0].content, /at most \*\*5\*\* running/)
+})
+
+test('settings service reports readiness and writes only credentials the settings use', async t => {
+  const { Context } = await import('@deepseek-ai/cordis')
+  const { TypertRegistry } = await import('@deepseek-ai/dsh-typert-registry')
+  const Plugin = await import('../lib/index.js')
+  const { PageCache } = await import('../lib/store.js')
+  const { DecisionModel } = await import('../lib/decision.js')
+  const ctx = new Context()
+  t.after(() => ctx.fiber.dispose())
+  new TypertRegistry(ctx)
+  const store = new Map()
+  ctx.provide('credentials'); ctx.set('credentials', {
+    describe: async ref => ({ configured: store.has(String(ref)), writable: true }),
+    resolve: async ref => store.has(String(ref)) ? { value: store.get(String(ref)) } : undefined,
+    set: async (ref, value) => { store.set(String(ref), value) },
+    unset: async ref => { store.delete(String(ref)) },
+  })
+  const config = Plugin.snapshotConfig(Plugin.Config({ sources: { exa: { enabled: true } } }))
+  const engine = new Plugin.Engine({ config: () => config, resolveKey: async ref => store.get(ref), web: () => undefined, decision: new DecisionModel(() => config, () => undefined), cache: new PageCache() })
+  const service = new Plugin.MultisearchService(ctx, engine, () => config)
+  const signal = new AbortController().signal
+  let status = await service.status({}, signal)
+  const exa = status.sources.find(s => s.id === 'exa')
+  assert.deepEqual(exa.credential, { ref: 'EXA_API_KEY', optional: false, configured: false, writable: true })
+  assert.deepEqual(exa.searchReady, { ok: false, reason: '缺少凭据' })
+  assert.equal(status.sources.find(s => s.id === 'brave').search, true)
+  assert.equal(status.sources.find(s => s.id === 'brave').fetch, false)
+  assert.deepEqual(await service.setCredential({ ref: 'EXA_API_KEY', value: ' exa-key ' }, signal), { configured: true })
+  assert.equal(store.get('EXA_API_KEY'), 'exa-key')
+  status = await service.status({}, signal)
+  assert.equal(status.sources.find(s => s.id === 'exa').searchReady.ok, true)
+  await assert.rejects(service.setCredential({ ref: 'OPENAI_API_KEY_OTHER', value: 'x' }, signal), /不属于本插件/)
+  assert.deepEqual(await service.clearCredential({ ref: 'EXA_API_KEY' }, signal), { configured: false })
+})
