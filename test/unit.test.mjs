@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Config, PRESETS, effectiveTuning, planRoute, inferTypes, mergeHits, fuse, rerank, keywordExcerpt, rangeExcerpt, urlKey, skillContent } from '../lib/index.js'
-import { ALL_SPECS, sourceSettings } from '../lib/config.js'
+import { ALL_SPECS, snapshotConfig, sourceSettings } from '../lib/config.js'
 
-const parsed = (input = {}) => Config(input)
+const parsed = (input = {}) => snapshotConfig(Config(input))
 const need = (over = {}) => ({ queries: ['q'], altQueries: [], types: [], preferOfficial: false, sites: [], excludeSites: [], ...over })
 
 test('config schema fills every default and source section', () => {

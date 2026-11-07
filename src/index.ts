@@ -6,7 +6,9 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { credentialRef, type CredentialRef } from '@deepseek-ai/dsh-credentials'
-import { Config as ConfigSchema, type Config as MultisearchConfig } from './config.js'
+import { Config as ConfigSchema, snapshotConfig, type Config as MultisearchConfig } from './config.js'
+import { remoteInfo } from './remote.js'
+import { MultisearchService } from './service.js'
 import { Engine } from './engine.js'
 import { DecisionModel } from './decision.js'
 import { PageCache, StoreRegistry } from './store.js'
@@ -18,7 +20,8 @@ export const inject = ['tools', 'systemPrompt']
 export const Config = ConfigSchema
 
 export { Engine } from './engine.js'
-export { PRESETS, effectiveTuning } from './config.js'
+export { PRESETS, effectiveTuning, snapshotConfig } from './config.js'
+export { MultisearchService } from './service.js'
 export type { MultisearchConfig }
 export { planRoute, inferTypes } from './router.js'
 export { mergeHits, fuse, rerank, diversify } from './aggregate.js'
@@ -39,8 +42,10 @@ async function resolveKey(ctx: Context, reference: string): Promise<string | und
   return process.env[reference] || undefined
 }
 
-export function apply(ctx: Context, input: MultisearchConfig): void {
-  const config = input
+export function apply(ctx: Context, input: unknown): void {
+  // Every section is volatile: the settings page edits them in place and the loader
+  // emits `loader/volatile-update` instead of remounting, so read through a snapshot.
+  let config = snapshotConfig(input)
   const engine = new Engine({
     config: () => config,
     resolveKey: reference => resolveKey(ctx, reference),
@@ -48,7 +53,25 @@ export function apply(ctx: Context, input: MultisearchConfig): void {
     decision: new DecisionModel(() => config, () => (ctx as any).get?.('llm')),
     cache: new PageCache(),
   })
-  registerTools(ctx, engine, new StoreRegistry(), config)
-  // The skill registry may load later or not at all; register whenever it is present.
-  ctx.inject(['skills'] as any, skillCtx => registerSkill(skillCtx, config))
+  const stores = new StoreRegistry()
+  // Tool names, descriptions and the skill text embed settings; rebuild them when settings change.
+  let disposeTools = registerTools(ctx, engine, stores, config)
+  let skillCtx: any
+  let disposeSkill = () => {}
+  ctx.inject(['skills'] as any, scoped => {
+    skillCtx = scoped
+    disposeSkill = registerSkill(scoped, config)
+    scoped.effect(() => () => { disposeSkill(); disposeSkill = () => {}; skillCtx = undefined }, 'multisearch: skill')
+  })
+  ctx.on('loader/volatile-update' as any, () => {
+    config = snapshotConfig(input)
+    disposeTools()
+    disposeTools = registerTools(ctx, engine, stores, config)
+    if (skillCtx) { disposeSkill(); disposeSkill = registerSkill(skillCtx, config) }
+  })
+  ctx.effect(() => () => disposeTools(), 'multisearch: tools')
+  ctx.inject(['typert'] as any, scoped => {
+    ;(scoped as any).typert.remotes.register(remoteInfo)
+    new MultisearchService(scoped, engine, () => config)
+  })
 }

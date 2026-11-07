@@ -55,9 +55,9 @@ You merge these into the final answer: lead with the conclusion, then the suppor
 `
 }
 
-export function registerSkill(ctx: any, config: Config): void {
-  if (!ctx.skills?.register) return
-  ctx.skills.register({
+export function registerSkill(ctx: any, config: Config): () => void {
+  if (!ctx.skills?.register) return () => {}
+  return ctx.skills.register({
     name: SKILL_NAME,
     description: `Multi-step deep research with ${config.tools.searchName || 'search'}/${config.tools.fetchName || 'fetch'}: plan directions, split work across up to ${config.research.maxSubagents} sub-agents, verify sources, check gaps and synthesize.`,
     whenToUse: 'Only when the user explicitly asks for deep research / a thorough investigation, or enables this skill. Not for ordinary lookups.',

@@ -14,7 +14,14 @@ DeepSeek Harness 的多源搜索与网页抓取插件，提供 `search`、`fetch
 github:forever-lwy/dsh-multisearch
 ```
 
-安装后在插件设置页配置。默认只启用无需 Key 的来源（Keenable 公开端点、Jina Reader、Hacker News、Hugging Face、Context7、Arctic Shift、DSH 内置网页服务、直接请求），其余来源填好凭据后打开“启用”。
+安装后打开 **设置 → 多源搜索**（插件页里本插件的详情页显示同一页面）：
+
+- **概览**：每个来源当前能否搜索、能否抓取，不能用时写明原因（缺密钥、缺 zone、自建服务没有搜索等）。
+- **搜索源与密钥**：启用来源、填写密钥（点“保存密钥”立即写入 DSH 凭据存储，不进设置文件）；高级设置里可改凭据引用名、优先级、接口地址、能力标签和来源专属参数。
+- **常规与档位**：默认档位、工具名、逐项覆盖档位值（留空跟随档位）、硬性上限。
+- **路由与抓取**、**重排与决策模型**、**深度研究**：对应下文各节。
+
+页面其余改动点“保存”后立即生效，不需要重启（所有设置都是热更新字段，工具名、工具说明和深度研究技能会随之重建）。默认只启用无需 Key 的来源（Keenable 公开端点、Jina Reader、Hacker News、Hugging Face、Context7、Arctic Shift、DSH 内置网页服务、直接请求）。
 
 要让模型只用本插件，请在 Agent 预设中停用内置 `@deepseek-ai/dsh-tool-web`（两者工具名不同，可以并存）。
 

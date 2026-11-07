@@ -2,4 +2,4 @@
 import type { Config } from './config.js';
 export declare const SKILL_NAME = "deep-research";
 export declare function skillContent(config: Config): string;
-export declare function registerSkill(ctx: any, config: Config): void;
+export declare function registerSkill(ctx: any, config: Config): () => void;
