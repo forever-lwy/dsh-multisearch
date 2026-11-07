@@ -1,0 +1,3 @@
+- insert:
+    - id: multisearch
+      name: '@forever-lwy/dsh-multisearch'

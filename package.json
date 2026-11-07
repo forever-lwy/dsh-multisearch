@@ -1,0 +1,75 @@
+{
+  "name": "@forever-lwy/dsh-multisearch",
+  "version": "0.1.0",
+  "description": "Multi-source search and page fetching for DeepSeek Harness: source routing, parallel search, dedupe, rank fusion, fallback fetching, optional decision model, and a deep-research skill",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/forever-lwy/dsh-multisearch.git"
+  },
+  "engines": {
+    "node": ">=22.13",
+    "dsh": "*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --test-isolation=none test/*.test.mjs",
+    "prepare": "npm run build",
+    "release": "node scripts/release.mjs"
+  },
+  "dependencies": {
+    "@mixmark-io/domino": "2.2.0",
+    "turndown": "7.2.4"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.5 <5.0.0",
+    "@deepseek-ai/dsh-credentials": ">=0.2.1-rc.5",
+    "@deepseek-ai/dsh-llm": ">=0.2.1-rc.5",
+    "@deepseek-ai/dsh-skill": ">=0.2.1-rc.5",
+    "@deepseek-ai/dsh-system-prompt": ">=0.2.1-rc.5",
+    "@deepseek-ai/dsh-tools": ">=0.2.1-rc.5",
+    "@deepseek-ai/dsh-web": ">=0.2.1-rc.5",
+    "@deepseek-ai/schemastery": ">=3.18.5 <4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-skill": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-web": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "~4.1.0",
+    "@deepseek-ai/dsh-credentials": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-skill": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-system-prompt": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-tool-executor-native": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-web": "0.2.2-rc.1",
+    "@deepseek-ai/schemastery": "~3.19.0",
+    "@types/node": "^24.0.0",
+    "@types/turndown": "5.0.6",
+    "typescript": "~5.9.3"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
