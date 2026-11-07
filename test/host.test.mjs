@@ -166,3 +166,105 @@ test('deep-research skill registers with the configured budget', async t => {
   assert.equal(registered[0].name, 'deep-research')
   assert.match(registered[0].content, /at most \*\*4\*\* running research directions/)
 })
+
+test('capability gates: Jina search needs a key while reading does not; self-hosted Crawl4AI cannot search', async t => {
+  mockFetch(t, [['https://r.jina.ai/', () => ({ json: { code: 200, data: { title: 'T', url: 'https://a.com/x', content: 'body '.repeat(100) } } })]])
+  const { call } = await boot(t, { sources: only(['jina', 'crawl4ai'], { crawl4ai: { options: { mode: 'self-hosted' }, baseURL: 'http://c4a:11235' } }) })
+  const out = await call('search', { queries: ['x'], sources: ['jina', 'crawl4ai'] })
+  assert.match(out.text, /jina 不可用：搜索需要 Jina API Key/)
+  assert.match(out.text, /crawl4ai 不可用：自建 Crawl4AI 不提供搜索/)
+  const read = await call('fetch', { urls: ['https://a.com/x'], services: ['jina'] })
+  assert.match(read.text, /状态: ok · 服务 jina/)
+})
+
+test('Crawl4AI cloud: search and scrape against api.crawl4ai.com; a login wall counts as blocked', async t => {
+  const calls = mockFetch(t, [
+    [url => url.startsWith('https://api.crawl4ai.com/search'), () => ({ json: { results: [{ title: 'R', url: 'https://r.com/1', snippet: 'crawl4ai result', source: 'gg' }] } })],
+    [url => url.startsWith('https://api.crawl4ai.com/scrape') , (_u, _i, body) => body.url.includes('wall') ? { status: 403, json: { error: 'login-wall' } } : { json: { ok: true, markdown: 'page '.repeat(80) } }],
+  ])
+  const { call } = await boot(t, { sources: only(['crawl4ai']) }, { credentials: { CRAWL4AI_API_KEY: 'sk_live_test123' } })
+  const out = await call('search', { queries: ['rust crawler'], sources: ['crawl4ai'] })
+  assert.match(out.text, /https:\/\/r\.com\/1/)
+  assert.equal(calls[0].headers.authorization, 'Bearer sk_live_test123')
+  const ok = await call('fetch', { urls: ['https://r.com/1'] })
+  assert.match(ok.text, /状态: ok · 服务 crawl4ai/)
+  assert.equal(calls[1].body.format, 'md')
+  const wall = await call('fetch', { urls: ['https://r.com/wall'] })
+  assert.match(wall.text, /状态: blocked/)
+})
+
+test('SciVerse: chunks grouped per paper, DOI links, full text read by doc_id or DOI', async t => {
+  const calls = mockFetch(t, [
+    ['https://api.sciverse.space/agentic-search', () => ({ json: { hits: [
+      { doc_id: 'd1', chunk_id: 'c1', chunk: 'graphene anode retains 90% capacity after 500 cycles', title: 'Graphene anodes', doi: '10.1000/abc', publication_published_year: 2023, citation_count: 12 },
+      { doc_id: 'd1', chunk_id: 'c2', chunk: 'cycling at 1C shows slow fade', title: 'Graphene anodes', doi: '10.1000/abc' },
+      { doc_id: 'd2', chunk_id: 'c3', chunk: 'silicon composite electrodes', title: 'Silicon composites' },
+    ] } })],
+    ['https://api.sciverse.space/meta-search', () => ({ json: { results: [{ doc_id: 'd1', title: 'Graphene anodes', doi: '10.1000/abc' }] } })],
+    ['https://api.sciverse.space/content', url => ({ json: { text: `Full text of ${new URL(url).searchParams.get('doc_id')} ${'lorem '.repeat(60)}`, more: false } })],
+  ])
+  const { call } = await boot(t, { sources: only(['sciverse']) }, { credentials: { SCIVERSE_API_TOKEN: 'sv-test-token' } })
+  const out = await call('search', { queries: ['graphene battery cycle stability'], source_types: ['academic'], after: '2020-01-01' })
+  assert.equal(out.isError, false, out.text)
+  assert.equal(calls[0].body.filters.publication_published_year.gte, 2020)
+  assert.match(out.text, /https:\/\/doi\.org\/10\.1000\/abc/)
+  assert.match(out.text, /https:\/\/api\.sciverse\.space\/content\?doc_id=d2/)
+  assert.equal((out.text.match(/^\[S\d+\]/gm) ?? []).length, 2, 'two papers, not three chunks')
+  const byDoi = await call('fetch', { urls: ['https://doi.org/10.1000/abc'] })
+  assert.match(byDoi.text, /服务 sciverse/)
+  assert.match(byDoi.text, /Full text of d1/)
+  const byDoc = await call('fetch', { urls: ['https://api.sciverse.space/content?doc_id=d2'] })
+  assert.match(byDoc.text, /Full text of d2/)
+})
+
+test('Consensus uses the documented query parameters and x-api-key', async t => {
+  const calls = mockFetch(t, [['https://api.consensus.app/v1/search', () => ({ json: { results: [{ title: 'Creatine and cognition', url: 'https://consensus.app/papers/x/1/', doi: '10.2903/j.efsa.2024.9100', takeaway: 'No established effect.', journal_name: 'EFSA Journal', publish_year: 2024, citation_count: 5, study_type: 'systematic review' }] } })]])
+  const { call } = await boot(t, { sources: only(['consensus'], { consensus: { options: { excludePreprints: true } } }) }, { credentials: { CONSENSUS_API_KEY: 'cons-key-123' } })
+  const out = await call('search', { queries: ['creatine working memory'], sources: ['consensus'], after: '2015-01-01' })
+  const url = new URL(calls[0].url)
+  assert.equal(url.searchParams.get('year_min'), '2015')
+  assert.equal(url.searchParams.get('exclude_preprints'), 'true')
+  assert.equal(calls[0].headers['x-api-key'], 'cons-key-123')
+  assert.match(out.text, /No established effect/)
+  assert.match(out.text, /study=systematic review/)
+})
+
+test('host-specific readers only see their hosts; model readers go last and are marked as generated', async t => {
+  const calls = mockFetch(t, [
+    ['https://arctic-shift.photon-reddit.com/api/posts/ids', () => ({ json: { data: [{ title: 'Bun thread', subreddit: 'javascript', author: 'a', score: 5, created_utc: 1700000000, selftext: 'is bun ready? '.repeat(20) }] } })],
+    ['https://arctic-shift.photon-reddit.com/api/comments/tree', () => ({ json: { data: [{ kind: 't1', data: { author: 'b', score: 3, body: 'yes for scripts', replies: { data: { children: [{ kind: 't1', data: { author: 'c', score: 1, body: 'not for native addons' } }] } } } }] } })],
+    ['https://r.jina.ai/', () => ({ status: 500, json: { code: 500 } })],
+    [url => url.includes('generativelanguage.googleapis.com'), () => ({ json: { candidates: [{ content: { parts: [{ text: 'Model rendering of the page. '.repeat(20) }] }, urlContextMetadata: { urlMetadata: [{ urlRetrievalStatus: 'URL_RETRIEVAL_STATUS_SUCCESS' }] } }] } })],
+  ])
+  const { call } = await boot(t, { sources: only(['arcticshift', 'jina', 'gemini', 'hackernews']), fetching: { order: ['gemini', 'jina'] }, overrides: { fetchRetries: 0 } }, { credentials: { GOOGLE_API_KEY: 'g-key-123456' } })
+  const reddit = await call('fetch', { urls: ['https://www.reddit.com/r/javascript/comments/abc123/bun_thread/'] })
+  assert.match(reddit.text, /服务 arcticshift/)
+  assert.match(reddit.text, /u\/b \(3\): yes for scripts/)
+  assert.match(reddit.text, /  - u\/c \(1\): not for native addons/)
+  const other = await call('fetch', { urls: ['https://example.org/page'] })
+  assert.match(other.text, /尝试 jina:error.* → gemini:ok/, 'gemini last despite configured order; HN/Arctic Shift never tried')
+  assert.match(other.text, /服务生成的转述（非原文，需核实）/)
+  assert.ok(!calls.some(c => c.url.includes('hn.algolia.com')))
+})
+
+test('You.com and Linkup read pages through their own endpoints', async t => {
+  const calls = mockFetch(t, [
+    ['https://ydc-index.io/v1/contents', () => ({ json: [{ url: 'https://a.com/', title: 'A', markdown: 'you content '.repeat(40) }] })],
+    ['https://api.linkup.so/v1/fetch', () => ({ json: { markdown: 'linkup content '.repeat(40) } })],
+  ])
+  const { call } = await boot(t, { sources: only(['you', 'linkup']) }, { credentials: { YDC_API_KEY: 'ydc-key-123', LINKUP_API_KEY: 'lk-key-123' } })
+  const a = await call('fetch', { urls: ['https://a.com/'], services: ['you'] })
+  assert.match(a.text, /服务 you/)
+  assert.deepEqual(calls[0].body.urls, ['https://a.com/'])
+  const b = await call('fetch', { urls: ['https://b.com/'], services: ['linkup'] })
+  assert.match(b.text, /服务 linkup/)
+  assert.equal(calls[1].body.renderJs, true)
+})
+
+test('Yuanbao accepts a service API KEY as Bearer', async t => {
+  const calls = mockFetch(t, [['https://api.wsa.cloud.tencent.com/SearchPro', () => ({ json: { Response: { Pages: [JSON.stringify({ title: 't', url: 'https://qq.com/a', passage: 'p' })] } } })]])
+  const { call } = await boot(t, { sources: only(['yuanbao']) }, { credentials: { TENCENTCLOUD_WSA_SECRET: 'sk-wsa-key' } })
+  const out = await call('search', { queries: ['三星堆'], sources: ['yuanbao'] })
+  assert.match(out.text, /https:\/\/qq\.com\/a/)
+  assert.equal(calls[0].headers.authorization, 'Bearer sk-wsa-key')
+})

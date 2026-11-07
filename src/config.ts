@@ -135,7 +135,7 @@ export const ALL_SPECS: SourceSpec[] = [...STATIC_ADAPTERS.map(a => a.spec), ...
 
 const sourcesSchema = z.object(Object.fromEntries(ALL_SPECS.map(spec => [spec.id, sourceSchema(spec)])))
 
-export const DEFAULT_FETCH_ORDER = ['keenable', 'jina', 'http', 'builtin', 'firecrawl', 'tavily', 'exa', 'contextdev', 'parallel', 'anysearch', 'crawl4ai', 'scrapingant', 'nimble', 'brightdata']
+export const DEFAULT_FETCH_ORDER = ['keenable', 'jina', 'http', 'builtin', 'firecrawl', 'tavily', 'exa', 'you', 'linkup', 'crawl4ai', 'contextdev', 'parallel', 'anysearch', 'scrapingant', 'nimble', 'brightdata', 'gemini', 'openai']
 
 export const Config: z<Config> = z.object({
   profile: z.union([...PROFILES]).default('balanced').description('默认档位：fast 快速 / balanced 均衡 / deep 深入'),

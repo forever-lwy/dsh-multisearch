@@ -6,8 +6,12 @@ import { isCjk } from './sources/util.js'
 export interface RoutableSource {
   spec: SourceSpec
   settings: SourceSettings
-  /** True when its credential resolved (or it needs none). */
+  /** Search is ready: credential resolved (or not needed) and any service-specific setting present. */
   usable: boolean
+  /** Fetch is ready, by the same rule. */
+  fetchUsable?: boolean
+  /** Why search is not ready, when it is not. */
+  reason?: string
 }
 
 export interface RouteChoice {
@@ -130,7 +134,7 @@ export function planRoute(input: PlanInput): RoutePlan {
       const source = byId.get(id)
       if (!source || !source.spec.caps.search) unavailable.push({ id, reason: source ? '不支持搜索' : '未知来源' })
       else if (!source.settings.enabled) unavailable.push({ id, reason: '已停用' })
-      else if (!source.usable) unavailable.push({ id, reason: '缺少凭据' })
+      else if (!source.usable) unavailable.push({ id, reason: source.reason ?? '缺少凭据' })
       else chosen.push({ id, score: source.settings.priority, reasons: ['调用方指定'] })
     }
     return { mode: 'explicit', chosen, reserve: [], unavailable, inferredTypes: inferred }

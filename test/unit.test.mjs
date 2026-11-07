@@ -151,3 +151,10 @@ test('default combination fills only with general web sources; docs-like subdoma
   assert.equal(ranked.find(c => c.url.includes('dev.to')).flags.has('official'), false)
   assert.equal(ranked.find(c => c.url.includes('python.org')).flags.has('official'), true)
 })
+
+test('DuckDuckGo HTML parsing unwraps redirect links and skips ads', async () => {
+  const { parseDuckDuckGo } = await import('../lib/html.js')
+  const html = `<div class="result result--ad"><a class="result__a" href="https://ad.example/">Ad</a></div>
+  <div class="result"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fbun.sh%2Fdocs&rut=x">Bun docs</a><a class="result__snippet">Bun is a fast runtime</a></div>`
+  assert.deepEqual(parseDuckDuckGo(html), [{ url: 'https://bun.sh/docs', title: 'Bun docs', snippet: 'Bun is a fast runtime' }])
+})

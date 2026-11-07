@@ -3,6 +3,7 @@ import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
 import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import * as Plugin from '../lib/index.js'
+import { ALL_SPECS } from '../lib/config.js'
 
 /**
  * Replace global fetch with a router: `routes` is a list of [predicate(url, init), handler(url, init, body)].
@@ -56,7 +57,7 @@ export async function boot(t, config = {}, { credentials = {}, web } = {}) {
 /** Sources config enabling exactly `ids` (all others off). */
 export function only(ids, extra = {}) {
   const sources = {}
-  for (const id of ['keenable', 'anysearch', 'exa', 'tavily', 'parallel', 'nimble', 'brave', 'you', 'linkup', 'yuanbao', 'gemini', 'openai', 'brightdata', 'firecrawl', 'contextdev', 'jina', 'scrapingant', 'crawl4ai', 'weir', 'arcticshift', 'hackernews', 'consensus', 'huggingface', 'context7', 'builtin', 'http']) {
+  for (const id of ALL_SPECS.map(spec => spec.id)) {
     sources[id] = { enabled: ids.includes(id), ...(extra[id] ?? {}) }
   }
   return sources

@@ -91,6 +91,8 @@ export interface FetchItem {
   matches?: number
   truncated: boolean
   publishedAt?: string
+  /** Model-written rendering of the page, not verbatim text. */
+  generated?: boolean
   error?: string
 }
 
@@ -126,11 +128,12 @@ export class Engine {
   async routable(): Promise<RoutableSource[]> {
     return Promise.all([...this.adapters.values()].map(async adapter => {
       const settings = sourceSettings(this.config, adapter.spec.id)
-      let usable = true
-      if (settings.enabled && adapter.spec.credential && !adapter.spec.keyOptional) usable = (await this.env(adapter.spec.id)).apiKey !== undefined
-      if (adapter.spec.id === 'crawl4ai') usable = settings.baseURL !== ''
-      if (adapter.spec.id === 'brightdata') usable = usable && Boolean(settings.options.serpZone || settings.options.unlockerZone)
-      return { spec: { ...adapter.spec, types: settings.types }, settings, usable }
+      const hasKey = settings.enabled && adapter.spec.credential ? (await this.env(adapter.spec.id)).apiKey !== undefined : false
+      const keyReason = adapter.spec.credential && !adapter.spec.keyOptional && !hasKey ? '缺少凭据' : undefined
+      const gate = adapter.gate?.({ hasKey, baseURL: settings.baseURL, options: settings.options }) ?? {}
+      const searchReason = adapter.spec.caps.search ? gate.search ?? keyReason : '不支持搜索'
+      const fetchReason = adapter.spec.caps.fetch ? gate.fetch ?? keyReason : '不支持抓取'
+      return { spec: { ...adapter.spec, types: settings.types }, settings, usable: searchReason === undefined, fetchUsable: fetchReason === undefined, ...(searchReason ? { reason: searchReason } : {}) }
     }))
   }
 
@@ -397,15 +400,18 @@ export class Engine {
   }
 
   private fetchOrder(url: string, input: FetchInput, sources: RoutableSource[], tuning: Tuning): string[] {
-    const usable = new Map(sources.filter(s => s.spec.caps.fetch && s.settings.enabled && s.usable).map(s => [s.spec.id, s]))
+    const host = hostOf(url)
+    const onHost = (hosts: string[] | undefined) => (hosts ?? []).some(h => host === h || host.endsWith(`.${h}`))
+    const usable = new Map(sources.filter(s => s.spec.caps.fetch && s.settings.enabled && s.fetchUsable && (!s.spec.fetchHosts || onHost(s.spec.fetchHosts))).map(s => [s.spec.id, s]))
     if (input.services.length) return input.services.filter(id => usable.has(id))
     let order = this.config.fetching.order.filter(id => usable.has(id))
     for (const id of usable.keys()) if (!order.includes(id)) order.push(id)
-    const host = hostOf(url)
     const front = (predicate: (s: RoutableSource) => boolean) => { order = [...order.filter(id => predicate(usable.get(id)!)), ...order.filter(id => !predicate(usable.get(id)!))] }
     if (this.config.fetching.preferRender.some(domain => host === domain || host.endsWith(`.${domain}`))) front(s => Boolean(s.spec.caps.render))
     if (/\.pdf($|\?)/i.test(url)) front(s => Boolean(s.spec.caps.pdf))
-    front(s => (s.spec.hosts ?? []).some(h => host === h || host.endsWith(`.${h}`)))
+    // Model-mediated readers paraphrase; keep them as the last resort whatever the configured order says.
+    order = [...order.filter(id => !usable.get(id)!.spec.caps.paraphrase), ...order.filter(id => usable.get(id)!.spec.caps.paraphrase)]
+    front(s => onHost(s.spec.hosts) || onHost(s.spec.fetchHosts))
     return order.slice(0, tuning.fetchFallbacks)
   }
 
@@ -463,6 +469,7 @@ export class Engine {
         page = {
           url, finalUrl: best.page.finalUrl, title: best.page.title, content: best.page.content, service: best.service,
           fetchedAt: Date.now(), status: best.status === 'ok' ? 'ok' : 'partial', truncated: best.status === 'partial', publishedAt: normalizeDate(best.page.publishedAt),
+          ...(best.page.generated ? { generated: true } : {}),
         }
         this.deps.cache.set(page)
       }
@@ -478,7 +485,7 @@ export class Engine {
     entry.page = page
     entry.status = page.status === 'ok' ? 'fetched' : 'partial'
     if (page.title && (entry.title === url || !entry.title)) entry.title = page.title
-    const base = { ref: entry.ref, url, finalUrl: page.finalUrl, title: page.title, service: page.service, fromCache, attempts, totalChars: page.content.length, publishedAt: page.publishedAt }
+    const base = { ref: entry.ref, url, finalUrl: page.finalUrl, title: page.title, service: page.service, fromCache, attempts, totalChars: page.content.length, publishedAt: page.publishedAt, ...(page.generated ? { generated: true } : {}) }
     if (input.keywords.length) {
       const excerpt = keywordExcerpt(page.content, input.keywords, input.contextChars, maxChars)
       if (excerpt.matches > 0) return { ...base, status: page.status, content: excerpt.text, view: 'keywords', matches: excerpt.matches, truncated: excerpt.truncated || page.truncated, ...(excerpt.ranges.length ? { range: [excerpt.ranges[0]![0], excerpt.ranges[excerpt.ranges.length - 1]![1]] as [number, number] } : {}) }
@@ -509,7 +516,7 @@ export class Engine {
     const limit = crawl.mode === 'map' ? crawl.maxPages * 5 : crawl.maxPages
     for (const id of ['tavily', 'firecrawl']) {
       const source = sources.find(s => s.spec.id === id)
-      if (!source?.settings.enabled || !source.usable) continue
+      if (!source?.settings.enabled || !source.fetchUsable) continue
       try {
         const links = await this.adapters.get(id)!.map!({ url: startUrl, maxDepth: crawl.maxDepth, maxPages: crawl.maxPages, includePaths: crawl.includePaths, excludePaths: crawl.excludePaths, sameDomain: crawl.sameDomain, signal: deadline, timeoutMs: tuning.requestTimeoutMs }, await this.env(id))
         const filtered = links.filter(link => allowed(link.url))

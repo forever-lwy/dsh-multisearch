@@ -26,43 +26,51 @@ github:forever-lwy/dsh-multisearch
 
 | 来源 | 说明 |
 | --- | --- |
-| 元宝搜索（腾讯云联网搜索） | 凭据值写成 `SecretId:SecretKey`；`options.edition` 为 `lite` 时不发送 Mode/Cnt/Industry |
-| Bright Data | 需要在 `options` 里填 `serpZone`（搜索）和/或 `unlockerZone`（抓取） |
-| Crawl4AI | 需要填写自建服务地址 `baseURL`；令牌可选 |
+| 元宝搜索 | 凭据值可以是服务 API KEY（走 `api.wsa.cloud.tencent.com`，Bearer），也可以是 `SecretId:SecretKey`（走 `wsa.tencentcloudapi.com`，TC3 签名）；`options.edition` 为 `lite` 时不发送 Mode/Cnt/Industry |
+| Crawl4AI | 默认 `options.mode: cloud`，使用官方云 `api.crawl4ai.com` 和 `CRAWL4AI_API_KEY`（`sk_live_…`）；改为 `self-hosted` 并填写 `baseURL` 即使用自建服务（自建版没有搜索） |
+| SciVerse | `SCIVERSE_API_TOKEN`（`sv-…`） |
+| Bright Data | 搜索需要 `options.serpZone`，抓取需要 `options.unlockerZone`，两者分别生效 |
+| Consensus | `options` 可开 `fullTextChunks`（付费计划返回全文相关段落）、`excludePreprints`、`medicalMode`、`domain`（学科代码） |
+| Linkup | `options.renderJs`（默认开）、`fetchMode`（`standard` / `pro`） |
 | Gemini / OpenAI | `options.model` 指定模型；Gemini 默认沿用 `GOOGLE_API_KEY` |
 
-## 来源
+## 来源与能力
 
-| ID | 服务 | 搜索 | 抓取 | 站点发现 | 主要类型 | 接入状态 |
-| --- | --- | --- | --- | --- | --- | --- |
-| keenable | Keenable | ✓ | ✓ |  | web, news, documentation | 在线实测（无 Key 公开端点） |
-| anysearch | AnySearch | ✓ | ✓ |  | 通用、学术、财经、代码、社媒、中文 | 按官方文档 |
-| exa | Exa | ✓ | ✓ |  | 文档、代码、论文、企业 | 按官方文档 |
-| tavily | Tavily | ✓ | ✓ | ✓ | web, news, finance | 按官方文档 |
-| parallel | Parallel | ✓ | ✓ |  | 复杂比较、背景调查 | 搜索按官方文档；抓取未实测 |
-| nimble | Nimble | ✓ | ✓ |  | web, news, company | 按官方文档 |
-| brave | Brave Search API | ✓ |  |  | web, news | 按官方文档 |
-| you | You.com | ✓ |  |  | web, news | 按官方文档 |
-| linkup | Linkup | ✓ |  |  | 事实核查、企业 | 按官方文档 |
-| yuanbao | 元宝搜索 | ✓ |  |  | 中文、新闻、政府、学术、财经 | 按官方文档（TC3 签名） |
-| gemini | Gemini + Google Search | ✓（生成） |  |  | answer | 按官方文档 |
-| openai | OpenAI + Web Search | ✓（生成） |  |  | answer | 按官方文档 |
-| brightdata | Bright Data | ✓ | ✓ |  | Google SERP、受限站点 | 按官方文档 |
-| firecrawl | Firecrawl | ✓ | ✓ | ✓ | 文档站、PDF | 按官方文档（v2） |
-| contextdev | Context.dev | ✓ | ✓ |  | 企业、品牌、新闻 | 按官方文档 |
-| jina | Jina Reader | ✓（需 Key） | ✓ |  | 正文读取、PDF | 抓取在线实测 |
-| scrapingant | ScrapingAnt |  | ✓ |  | 动态网页 | 未实测 |
-| crawl4ai | Crawl4AI（自建） |  | ✓ |  | 自建抓取 | 按官方文档 |
-| weir | Weir | ✓ | ✓ |  | X、Reddit | 搜索按官方文档；帖子读取未实测 |
-| arcticshift | Arctic Shift |  ✓ |  |  | Reddit 归档 | 在线实测；须在 sites 指定 `reddit.com/r/<社区>` |
-| hackernews | Hacker News (Algolia) | ✓ | ✓ |  | 技术社区 | 在线实测 |
-| consensus | Consensus | ✓ |  |  | 学术证据 | 官方文档不可读，按第三方资料，未实测 |
-| huggingface | Hugging Face | ✓ |  |  | 模型、数据集、论文 | 在线实测 |
-| context7 | Context7 | ✓ |  |  | 编程库文档 | 在线实测 |
-| builtin | DSH 内置网页服务 | ✓ | ✓ |  | web | 依赖部署配置 |
-| http | 直接请求 |  | ✓ |  | web | 在线实测；默认拒绝本机与内网地址 |
+每个来源的搜索和抓取能力独立判断是否可用：缺少凭据或必需设置时，结果的“执行情况”里会写明原因。
 
-“按官方文档”表示请求和解析按服务文档实现并有模拟测试，但没有用真实 Key 调用过；首次使用请留意结果中的“执行情况”。
+| ID | 服务 | 搜索 | 抓取 | 主要类型 | 接入状态 |
+| --- | --- | --- | --- | --- | --- |
+| keenable | Keenable | ✓ | ✓ | web, news, documentation | 在线实测（无 Key 公开端点） |
+| anysearch | AnySearch | ✓ | ✓ | 通用、学术、财经、代码、社媒、中文 | 按官方文档 |
+| exa | Exa | ✓ | ✓（/contents） | 文档、代码、论文、企业 | 按官方文档 |
+| tavily | Tavily | ✓ | ✓（/extract，另有站点发现） | web, news, finance | 按官方文档 |
+| parallel | Parallel | ✓ | ✓（/v1/extract） | 复杂比较、背景调查 | 按官方 OpenAPI |
+| nimble | Nimble | ✓ | ✓（/v2/extract，渲染） | web, news, company | 按官方文档 |
+| brave | Brave Search API | ✓ | — 官方无按 URL 读取接口 | web, news | 按官方文档 |
+| you | You.com | ✓ | ✓（Contents API） | web, news | 按官方文档 |
+| linkup | Linkup | ✓ | ✓（/v1/fetch，可渲染 JS） | 事实核查、企业 | 按官方 OpenAPI |
+| yuanbao | 元宝搜索 | ✓ | — 官方只有 SearchPro 搜索接口 | 中文、新闻、政府、学术、财经 | 按官方文档 |
+| gemini | Gemini + Google Search | ✓（生成） | ✓（URL Context，生成的转述） | answer | 按官方文档 |
+| openai | OpenAI + Web Search | ✓（生成） | ✓（模型打开网页后转述） | answer | 按官方文档 |
+| brightdata | Bright Data | ✓（Google SERP） | ✓（Web Unlocker） | 受限站点 | 按官方文档 |
+| firecrawl | Firecrawl | ✓ | ✓（另有站点发现） | 文档站、PDF | 按官方文档（v2） |
+| contextdev | Context.dev | ✓ | ✓ | 企业、品牌、新闻 | 按官方文档 |
+| jina | Jina | ✓（需 Key） | ✓（Reader，无 Key 可用） | 正文读取、PDF | 读取在线实测 |
+| scrapingant | ScrapingAnt | ✓（经代理抓取 DuckDuckGo 结果页） | ✓（/v2/markdown） | 动态网页 | 结果页解析在线实测；接口未用 Key 实测 |
+| crawl4ai | Crawl4AI 官方云 / 自建 | ✓（仅官方云） | ✓ | 浏览器抓取 | 按官方 llms.txt |
+| weir | Weir | ✓ | ✓（X/Reddit 帖子与评论） | X、Reddit | 按官方 OpenAPI |
+| arcticshift | Arctic Shift | ✓（须在 sites 指定 `reddit.com/r/<社区>`） | ✓（Reddit 帖子与评论树） | Reddit 归档 | 在线实测 |
+| hackernews | Hacker News (Algolia) | ✓ | ✓（HN 帖子与评论） | 技术社区 | 在线实测 |
+| consensus | Consensus | ✓ | — 官方无读取接口（付费计划可在搜索中附全文段落） | 学术证据 | 按官方文档 |
+| sciverse | SciVerse | ✓（agentic-search） | ✓（按 doc_id 或 DOI 读全文） | 学术文献 | 按官方 llms.txt |
+| huggingface | Hugging Face | ✓ | ✓（模型/数据集卡片、论文摘要） | 模型、数据集、论文 | 在线实测 |
+| context7 | Context7 | ✓ | ✓（按库读取文档） | 编程库文档 | 在线实测 |
+| builtin | DSH 内置网页服务 | ✓ | ✓ | web | 依赖部署配置 |
+| http | 直接请求 | — | ✓ | web | 在线实测；默认拒绝本机与内网地址 |
+
+“按官方文档/OpenAPI”表示请求和解析按服务文档实现并有模拟测试，但没有用真实 Key 调用过；首次使用请留意结果中的“执行情况”。
+
+只认识特定站点的读取器（Weir、Arctic Shift、Hacker News、Hugging Face、Context7、SciVerse）只用于对应站点的链接，并排在回退顺序最前；Gemini、OpenAI 的模型转述总是排在最后，结果标注“服务生成的转述（非原文）”。
 
 ## 工具参数
 

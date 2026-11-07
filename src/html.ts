@@ -81,6 +81,24 @@ export function htmlToMarkdown(html: string, baseUrl: string): HtmlDocument {
   return { title, markdown, links, publishedAt: publishedAt || undefined }
 }
 
+/** Organic results of DuckDuckGo's HTML endpoint (links are `/l/?uddg=<target>` redirects). */
+export function parseDuckDuckGo(html: string): { url: string; title?: string; snippet?: string }[] {
+  const document = domino.createDocument(html)
+  const out: { url: string; title?: string; snippet?: string }[] = []
+  for (const result of Array.from(document.querySelectorAll('.result')) as any[]) {
+    if (/result--ad/.test(result.getAttribute?.('class') ?? '')) continue
+    const anchor = result.querySelector('a.result__a')
+    let href = anchor?.getAttribute('href') ?? ''
+    try {
+      const parsed = new URL(href, 'https://duckduckgo.com')
+      href = parsed.searchParams.get('uddg') ?? parsed.toString()
+    } catch { continue }
+    if (!/^https?:\/\//.test(href)) continue
+    out.push({ url: href, title: (anchor?.textContent ?? '').trim() || undefined, snippet: (result.querySelector('.result__snippet')?.textContent ?? '').replace(/\s+/g, ' ').trim() || undefined })
+  }
+  return out
+}
+
 /** Markdown links, for crawling over services that return markdown only. */
 export function markdownLinks(markdown: string, baseUrl: string): { url: string; text: string }[] {
   const out: { url: string; text: string }[] = []

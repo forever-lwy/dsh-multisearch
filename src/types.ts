@@ -79,6 +79,8 @@ export interface FetchedPage {
   publishedAt?: string
   /** Content type when known, e.g. text/html, application/pdf. */
   contentType?: string
+  /** Content was written by a model reading the page, not extracted verbatim. */
+  generated?: boolean
 }
 
 export interface CrawlRequest {
@@ -104,6 +106,8 @@ export interface SourceCapabilities {
   /** Can render JavaScript or bypass simple blocks when fetching. */
   render?: boolean
   pdf?: boolean
+  /** Fetch output is a model's rendering of the page (Gemini URL context, OpenAI web search). */
+  paraphrase?: boolean
 }
 
 export interface SourceFilters {
@@ -132,6 +136,8 @@ export interface SourceSpec {
   defaultEnabled?: boolean
   /** Hosts this source is the natural reader for (fetch routing). */
   hosts?: string[]
+  /** The reader only understands these hosts (others are skipped, never attempted). */
+  fetchHosts?: string[]
   /** Short model-facing description of strengths. */
   blurb: string
   /** A precondition on the need; routing skips the source unless it holds (explicit calls still try). */
@@ -163,8 +169,17 @@ export interface HttpInit {
   maxBytes?: number
 }
 
+/** Settings an adapter's gate sees. */
+export interface GateInput {
+  hasKey: boolean
+  baseURL: string
+  options: Record<string, string | number | boolean>
+}
+
 export interface SourceAdapter {
   spec: SourceSpec
+  /** Per-capability readiness beyond the generic key check; return a reason when unavailable. */
+  gate?(input: GateInput): { search?: string; fetch?: string }
   search?(q: SourceQuery, env: AdapterEnv): Promise<SourceSearchResult>
   fetch?(r: FetchRequest, env: AdapterEnv): Promise<FetchedPage>
   map?(r: CrawlRequest, env: AdapterEnv): Promise<MappedLink[]>

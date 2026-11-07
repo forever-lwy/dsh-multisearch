@@ -246,7 +246,7 @@ export const brave: SourceAdapter = {
     id: 'brave', label: 'Brave Search', engine: 'brave', priority: 60,
     caps: { search: true }, types: ['web', 'news'],
     filters: { site: true, time: true, language: true, region: true }, credential: 'BRAVE_API_KEY',
-    blurb: '独立索引，补充 Google/Bing 之外的结果，支持新闻与新鲜度过滤',
+    blurb: '独立索引，补充 Google/Bing 之外的结果，支持新闻与新鲜度过滤（官方无按 URL 读取接口）',
   },
   async search(q, env) {
     const key = requireKey(env.apiKey, 'Brave')
@@ -273,9 +273,19 @@ export const brave: SourceAdapter = {
 export const you: SourceAdapter = {
   spec: {
     id: 'you', label: 'You.com', engine: 'you', priority: 56,
-    caps: { search: true }, types: ['web', 'news'],
+    caps: { search: true, fetch: true }, types: ['web', 'news'],
     filters: { site: true, time: true, language: true, region: true }, credential: 'YDC_API_KEY',
-    blurb: '实时网页与新闻搜索，支持地区、语言、时间筛选',
+    blurb: '实时网页与新闻搜索，支持地区、语言、时间筛选；Contents API 读取网页正文',
+  },
+  async fetch(r, env) {
+    const key = requireKey(env.apiKey, 'You.com')
+    const data = await env.http.json(joinUrl(env.baseURL, 'https://ydc-index.io', '/v1/contents'), {
+      body: { urls: [r.url], formats: ['markdown', 'metadata'], crawl_timeout: Math.max(1, Math.min(60, Math.floor(r.timeoutMs / 1000) - 1)), ...(r.live ? { max_age: 0 } : {}) },
+      headers: { 'x-api-key': key }, signal: r.signal, timeoutMs: r.timeoutMs,
+    })
+    const first = arr(Array.isArray(data) ? data : data.results ?? data.contents)[0]
+    if (!first || first.markdown == null) throw new SourceError('You.com: 未取得页面内容', 'upstream')
+    return { url: r.url, finalUrl: str(first.url), title: str(first.title), content: str(first.markdown) ?? '' }
   },
   async search(q, env) {
     const key = requireKey(env.apiKey, 'You.com')
@@ -296,10 +306,18 @@ export const you: SourceAdapter = {
 export const linkup: SourceAdapter = {
   spec: {
     id: 'linkup', label: 'Linkup', engine: 'linkup', priority: 58,
-    caps: { search: true, answer: true }, types: ['web', 'company', 'news'],
+    caps: { search: true, fetch: true, answer: true, render: true }, types: ['web', 'company', 'news'],
     filters: { site: true, time: true }, credential: 'LINKUP_API_KEY',
-    blurb: '搜索资料或返回带来源的答案，适合事实核查与企业信息调查',
-    options: { depth: 'standard', answer: false },
+    blurb: '搜索资料或返回带来源的答案，适合事实核查与企业信息调查；/fetch 读取网页（可渲染 JS）',
+    options: { depth: 'standard', answer: false, renderJs: true, fetchMode: 'standard' },
+  },
+  async fetch(r, env) {
+    const key = requireKey(env.apiKey, 'Linkup')
+    const data = await env.http.json(joinUrl(env.baseURL, 'https://api.linkup.so', '/v1/fetch'), {
+      body: { url: r.url, renderJs: env.options.renderJs !== false, mode: String(env.options.fetchMode || 'standard') },
+      headers: { authorization: `Bearer ${key}` }, signal: r.signal, timeoutMs: r.timeoutMs,
+    })
+    return { url: r.url, content: str(data.markdown) ?? '' }
   },
   async search(q, env) {
     const key = requireKey(env.apiKey, 'Linkup')
@@ -342,13 +360,13 @@ export const yuanbao: SourceAdapter = {
     id: 'yuanbao', label: '元宝搜索（腾讯云联网搜索）', engine: 'sogou', priority: 60,
     caps: { search: true }, types: ['chinese', 'web', 'news', 'government', 'academic', 'finance'],
     filters: { site: true, time: true }, credential: 'TENCENTCLOUD_WSA_SECRET',
-    blurb: '覆盖中文全网与腾讯内容生态，支持站点、时间及新闻/政府/学术/财经筛选，适合国内资料与时效信息',
+    blurb: '覆盖中文全网与腾讯内容生态，支持站点、时间及新闻/政府/学术/财经筛选，适合国内资料与时效信息（官方无网页读取接口）',
     options: { edition: 'standard', mode: 0 },
   },
   async search(q, env) {
     const secret = requireKey(env.apiKey, '元宝搜索')
-    const split = secret.indexOf(':')
-    if (split <= 0) throw new SourceError('元宝搜索凭据格式应为 SecretId:SecretKey', 'no_credential')
+    // `SecretId:SecretKey` → Tencent Cloud TC3 signing; anything else is a service API KEY (Bearer).
+    const split = /^AKID/.test(secret) ? secret.indexOf(':') : -1
     const lite = String(env.options.edition) === 'lite'
     const industry = q.need.types.map(type => YUANBAO_INDUSTRY[type]).find(Boolean)
     const freshness = q.need.after
@@ -361,10 +379,15 @@ export const yuanbao: SourceAdapter = {
     }
     const payload = JSON.stringify(body)
     const host = 'wsa.tencentcloudapi.com'
-    const data = await env.http.json(env.baseURL || `https://${host}`, {
-      method: 'POST', body: payload, signal: q.signal, timeoutMs: q.timeoutMs,
-      headers: tc3Headers(secret.slice(0, split), secret.slice(split + 1), host, 'wsa', 'SearchPro', '2025-05-08', payload),
-    })
+    const data = split > 0
+      ? await env.http.json(env.baseURL || `https://${host}`, {
+        method: 'POST', body: payload, signal: q.signal, timeoutMs: q.timeoutMs,
+        headers: tc3Headers(secret.slice(0, split), secret.slice(split + 1), host, 'wsa', 'SearchPro', '2025-05-08', payload),
+      })
+      : await env.http.json(joinUrl(env.baseURL, 'https://api.wsa.cloud.tencent.com', '/SearchPro'), {
+        method: 'POST', body: payload, signal: q.signal, timeoutMs: q.timeoutMs,
+        headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json; charset=utf-8' },
+      })
     const response = data.Response ?? {}
     if (response.Error) throw new SourceError(`元宝搜索: ${str(response.Error.Code)} ${str(response.Error.Message) ?? ''}`.trim(), String(response.Error.Code).startsWith('AuthFailure') ? 'auth' : 'upstream')
     const pages = arr(response.Pages).map(page => { try { return typeof page === 'string' ? JSON.parse(page) : page } catch { return undefined } }).filter(Boolean)
@@ -415,6 +438,10 @@ export const brightdata: SourceAdapter = {
     blurb: 'Google SERP 与 Web Unlocker，适合普通请求容易失败的页面、Reddit/X 等受限站点',
     options: { serpZone: '', unlockerZone: '' },
   },
+  gate: ({ options }) => ({
+    ...(options.serpZone ? {} : { search: '未配置 SERP zone' }),
+    ...(options.unlockerZone ? {} : { fetch: '未配置 Web Unlocker zone' }),
+  }),
   async search(q, env) {
     const key = requireKey(env.apiKey, 'Bright Data')
     const zone = String(env.options.serpZone || '')

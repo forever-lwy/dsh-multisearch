@@ -3,7 +3,7 @@ import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
 import type { SourceAdapter } from '../types.js'
 import { SourceError, http } from '../http.js'
-import { htmlToMarkdown } from '../html.js'
+import { htmlToMarkdown, parseDuckDuckGo } from '../html.js'
 import { arr, clip, hit, hits, joinUrl, num, requireKey, str, withSiteOperators } from './util.js'
 
 export const jina: SourceAdapter = {
@@ -13,6 +13,7 @@ export const jina: SourceAdapter = {
     filters: { site: true }, credential: 'JINA_API_KEY', keyOptional: true, defaultEnabled: true,
     blurb: '把已知 URL 转成适合模型阅读的正文（支持 PDF）；搜索需要 Key',
   },
+  gate: ({ hasKey }) => hasKey ? {} : { search: '搜索需要 Jina API Key（读取无需）' },
   async search(q, env) {
     const key = requireKey(env.apiKey, 'Jina Search')
     const data = await env.http.json('https://s.jina.ai/', {
@@ -78,9 +79,22 @@ export const firecrawl: SourceAdapter = {
 export const scrapingant: SourceAdapter = {
   spec: {
     id: 'scrapingant', label: 'ScrapingAnt', engine: 'scrapingant', priority: 45,
-    caps: { fetch: true, render: true }, types: ['web'], filters: {}, credential: 'SCRAPINGANT_API_KEY',
-    blurb: '浏览器渲染加代理抓取，适合依赖 JavaScript 加载、直接请求拿不到正文的网站',
+    caps: { search: true, fetch: true, render: true }, types: ['web'], filters: { site: true, region: true }, credential: 'SCRAPINGANT_API_KEY',
+    blurb: '浏览器渲染加代理抓取，适合依赖 JavaScript 加载的网站；搜索通过代理抓取 DuckDuckGo 结果页',
     options: { proxyCountry: '' },
+  },
+  async search(q, env) {
+    const key = requireKey(env.apiKey, 'ScrapingAnt')
+    const target = new URL('https://html.duckduckgo.com/html/')
+    target.searchParams.set('q', withSiteOperators(q.query, q.need))
+    if (q.need.timeRange) target.searchParams.set('df', q.need.timeRange[0]!)
+    if (q.need.region) target.searchParams.set('kl', `${q.need.region.toLowerCase()}-${(q.need.language ?? 'en').split('-')[0]}`)
+    const res = await env.http.text(joinUrl(env.baseURL, 'https://api.scrapingant.com', '/v2/general'), {
+      query: { url: target.toString(), browser: false, proxy_country: String(env.options.proxyCountry || '') || undefined },
+      headers: { 'x-api-key': key }, signal: q.signal, timeoutMs: q.timeoutMs,
+    })
+    if (res.status >= 400) throw new SourceError(`ScrapingAnt HTTP ${res.status}: ${res.text.slice(0, 200)}`, res.status === 401 || res.status === 403 ? 'auth' : 'upstream', res.status)
+    return { hits: parseDuckDuckGo(res.text).slice(0, q.maxResults) }
   },
   async fetch(r, env) {
     const key = requireKey(env.apiKey, 'ScrapingAnt')
@@ -92,15 +106,48 @@ export const scrapingant: SourceAdapter = {
   },
 }
 
+const CRAWL4AI_CLOUD = 'https://api.crawl4ai.com'
+const crawl4aiCloud = (env: { baseURL?: string; options: Record<string, string | number | boolean> }) => String(env.options.mode || 'cloud') !== 'self-hosted'
+
 export const crawl4ai: SourceAdapter = {
   spec: {
-    id: 'crawl4ai', label: 'Crawl4AI（自建）', engine: 'crawl4ai', priority: 45,
-    caps: { fetch: true, render: true }, types: ['web'], filters: {}, credential: 'CRAWL4AI_API_TOKEN', keyOptional: true,
-    blurb: '自建浏览器抓取与正文清洗服务，需要在设置中填写服务地址',
-    options: { filter: 'fit' },
+    id: 'crawl4ai', label: 'Crawl4AI（官方云 / 自建）', engine: 'crawl4ai', priority: 50,
+    caps: { search: true, fetch: true, render: true }, types: ['web'], filters: { site: true }, credential: 'CRAWL4AI_API_KEY', keyOptional: true,
+    blurb: '官方云 api.crawl4ai.com：网页搜索与按需浏览器抓取；也可切到自建服务（自建版只能抓取）',
+    options: { mode: 'cloud', engine: 'auto', proxy: 'none', filter: 'fit' },
+  },
+  gate: ({ hasKey, baseURL, options }) => String(options.mode || 'cloud') === 'self-hosted'
+    ? { search: '自建 Crawl4AI 不提供搜索', ...(baseURL ? {} : { fetch: '未配置自建服务地址' }) }
+    : hasKey ? {} : { search: '缺少凭据', fetch: '缺少凭据' },
+  async search(q, env) {
+    if (!crawl4aiCloud(env)) throw new SourceError('自建 Crawl4AI 不提供搜索', 'unsupported_type')
+    const key = requireKey(env.apiKey, 'Crawl4AI')
+    const data = await env.http.json(joinUrl(env.baseURL, CRAWL4AI_CLOUD, '/search'), {
+      query: { q: withSiteOperators(q.query, q.need).slice(0, 512) }, headers: { authorization: `Bearer ${key}` }, signal: q.signal, timeoutMs: q.timeoutMs,
+    })
+    const list: any[] = Array.isArray(data) ? data : arr(data.results ?? data.data ?? data.items)
+    return { hits: hits(list.slice(0, q.maxResults).map(r => hit(r.url ?? r.link, { title: str(r.title), snippet: clip(str(r.snippet) ?? str(r.description), 600), meta: str(r.source) ? { engine: str(r.source)! } : undefined }))) }
   },
   async fetch(r, env) {
-    if (!env.baseURL) throw new SourceError('Crawl4AI 未配置服务地址', 'no_credential')
+    if (crawl4aiCloud(env)) {
+      const key = requireKey(env.apiKey, 'Crawl4AI')
+      try {
+        const data = await env.http.json(joinUrl(env.baseURL, CRAWL4AI_CLOUD, '/scrape'), {
+          body: {
+            url: r.url, format: 'md',
+            ...(String(env.options.engine || 'auto') !== 'auto' ? { engine: String(env.options.engine) } : {}),
+            ...(String(env.options.proxy || 'none') !== 'none' ? { proxy: String(env.options.proxy) } : {}),
+          },
+          headers: { authorization: `Bearer ${key}` }, signal: r.signal, timeoutMs: r.timeoutMs,
+        })
+        return { url: r.url, content: str(data.markdown) ?? '' }
+      } catch (error) {
+        // 403 login-wall / blocked are page states, not service failures: report them as such.
+        if (error instanceof SourceError && error.status === 403 && /login-wall|blocked/.test(error.message)) return { url: r.url, content: error.message, statusCode: 403 }
+        throw error
+      }
+    }
+    if (!env.baseURL) throw new SourceError('Crawl4AI 未配置自建服务地址', 'no_credential')
     const data = await env.http.json(joinUrl(env.baseURL, '', '/md'), {
       body: { url: r.url, f: String(env.options.filter || 'fit'), ...(r.focus ? { q: r.focus } : {}), c: r.live ? '0' : '1' },
       headers: env.apiKey ? { authorization: `Bearer ${env.apiKey}` } : {}, signal: r.signal, timeoutMs: r.timeoutMs,

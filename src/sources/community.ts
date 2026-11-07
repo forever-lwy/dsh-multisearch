@@ -43,7 +43,7 @@ export const weir: SourceAdapter = {
     id: 'weir', label: 'Weir', engine: 'weir', priority: 60,
     caps: { search: true, fetch: true }, types: ['social', 'community'],
     filters: { site: true, time: true, language: true }, credential: 'WEIR_API_KEY',
-    hosts: ['x.com', 'twitter.com', 'reddit.com', 'redd.it'],
+    fetchHosts: ['x.com', 'twitter.com', 'reddit.com', 'redd.it'],
     blurb: 'X 与 Reddit 专用检索，读取帖子、评论和讨论串，适合关键词讨论收集和社媒追踪',
     options: { platforms: 'reddit,x' },
   },
@@ -89,7 +89,7 @@ export const weir: SourceAdapter = {
     if (xId) {
       const thread = await env.http.json(joinUrl(base, '', `/v1/x/posts/${xId}/thread`), { headers, signal: r.signal, timeoutMs: r.timeoutMs }).catch(() => undefined)
       const posts = arr(thread?.data)
-      const replies = await env.http.json(joinUrl(base, '', `/v1/x/posts/${xId}/replies`), { headers, signal: r.signal, timeoutMs: r.timeoutMs }).catch(() => undefined)
+      const replies = await env.http.json(joinUrl(base, '', `/v1/x/posts/${xId}/replies`), { query: { limit: 40 }, headers, signal: r.signal, timeoutMs: r.timeoutMs }).catch(() => undefined)
       const main = posts.length ? posts : [(await env.http.json(joinUrl(base, '', `/v1/x/posts/${xId}`), { headers, signal: r.signal, timeoutMs: r.timeoutMs })).data]
       const content = [`## Thread`, ...main.map(formatXPost), ...(arr(replies?.data).length ? ['## Replies', ...arr(replies?.data).slice(0, 40).map(formatXPost)] : [])].join('\n\n')
       return { url: r.url, title: 'X post', content }
@@ -97,7 +97,7 @@ export const weir: SourceAdapter = {
     const redditId = redditPostId(r.url)
     if (redditId) {
       const post = (await env.http.json(joinUrl(base, '', `/v1/reddit/posts/${redditId}`), { headers, signal: r.signal, timeoutMs: r.timeoutMs })).data ?? {}
-      const comments = await env.http.json(joinUrl(base, '', `/v1/reddit/posts/${redditId}/comments`), { headers, signal: r.signal, timeoutMs: r.timeoutMs }).catch(() => undefined)
+      const comments = await env.http.json(joinUrl(base, '', `/v1/reddit/posts/${redditId}/comments`), { query: { limit: 80 }, headers, signal: r.signal, timeoutMs: r.timeoutMs }).catch(() => undefined)
       const lines = arr(comments?.data).slice(0, 80).map(c => `${'  '.repeat(Math.min(6, num(c.depth) ?? 0))}- u/${str(c.author) ?? '?'} (${num(c.score) ?? 0}): ${clip(str(c.body), 1200) ?? ''}`)
       return { url: r.url, title: str(post.title), content: [`# ${str(post.title) ?? ''}`, `r/${str(post.subreddit) ?? ''} · u/${str(post.author) ?? ''} · score ${num(post.score) ?? 0}`, str(post.selftext) ?? '', lines.length ? '## Comments' : '', ...lines].filter(Boolean).join('\n\n') }
     }
@@ -108,8 +108,31 @@ export const weir: SourceAdapter = {
 export const arcticshift: SourceAdapter = {
   spec: {
     id: 'arcticshift', label: 'Arctic Shift', engine: 'reddit-archive', priority: 45,
-    caps: { search: true }, types: ['community'], filters: { time: true, site: true }, defaultEnabled: true, needs: 'subreddit',
-    blurb: 'Reddit 历史归档检索，适合回溯旧讨论；需要在 sites 中指定 reddit.com/r/<社区>',
+    caps: { search: true, fetch: true }, types: ['community'], filters: { time: true, site: true }, defaultEnabled: true, needs: 'subreddit',
+    fetchHosts: ['reddit.com', 'redd.it'],
+    blurb: 'Reddit 历史归档检索与帖子读取（含已删除帖的归档），搜索需要在 sites 中指定 reddit.com/r/<社区>',
+  },
+  async fetch(r, env) {
+    const id = redditPostId(r.url)
+    if (!id) throw new SourceError('不是 Reddit 帖子链接', 'unsupported_type')
+    const base = env.baseURL || 'https://arctic-shift.photon-reddit.com'
+    const post = arr((await env.http.json(`${base}/api/posts/ids`, { query: { ids: id }, signal: r.signal, timeoutMs: r.timeoutMs })).data)[0]
+    if (!post) throw new SourceError('Arctic Shift 没有该帖子的归档', 'not_found')
+    const tree = await env.http.json(`${base}/api/comments/tree`, { query: { link_id: `t3_${id}`, limit: 120 }, signal: r.signal, timeoutMs: r.timeoutMs }).catch(() => undefined)
+    const lines: string[] = []
+    const walk = (nodes: any[], depth: number) => {
+      for (const node of nodes) {
+        if (lines.length >= 150) return
+        const c = node?.data ?? node
+        if (node?.kind === 'more' || !c) continue
+        if (str(c.body)) lines.push(`${'  '.repeat(Math.min(depth, 6))}- u/${str(c.author) ?? '?'} (${num(c.score) ?? 0}): ${clip(str(c.body), 1200)}`)
+        const replies = c.replies?.data?.children ?? c.replies ?? c.children
+        if (Array.isArray(replies)) walk(replies, depth + 1)
+      }
+    }
+    walk(arr(tree?.data), 0)
+    const head = [`# ${str(post.title) ?? ''}`, `r/${str(post.subreddit) ?? ''} · u/${str(post.author) ?? ''} · score ${num(post.score) ?? 0} · ${unixToIso(post.created_utc) ?? ''}`, str(post.url) && !String(post.url).includes(id) ? `Link: ${post.url}` : '', str(post.selftext) ?? '']
+    return { url: r.url, title: str(post.title), content: [...head, lines.length ? '## Comments' : '', ...lines].filter(Boolean).join('\n\n'), publishedAt: unixToIso(post.created_utc) }
   },
   async search(q, env) {
     const subreddit = subredditOf(q.need.sites)
@@ -133,7 +156,7 @@ export const hackernews: SourceAdapter = {
   spec: {
     id: 'hackernews', label: 'Hacker News (Algolia)', engine: 'hn', priority: 50,
     caps: { search: true, fetch: true }, types: ['community', 'code', 'news'], filters: { time: true }, defaultEnabled: true,
-    hosts: ['news.ycombinator.com'],
+    fetchHosts: ['news.ycombinator.com'],
     blurb: '检索 Hacker News 帖子与评论，适合查 AI、开发工具、开源项目与创业产品的技术社区讨论',
   },
   async search(q, env) {
