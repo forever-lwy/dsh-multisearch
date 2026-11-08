@@ -298,6 +298,10 @@ export const gemini: SourceAdapter = {
   },
 }
 
+/** OpenAI declines verbatim reproduction; ask for a detailed faithful digest instead. */
+const DIGEST_PROMPT = (url: string, focus?: string) => `Open ${url} and give a detailed, faithful account of its main content in Markdown, following the page's own structure and headings. Keep concrete facts, names, dates, numbers, versions, code identifiers, commands and caveats exactly as written; quote short key passages. Omit navigation, ads and footers. Add no outside information or commentary.${focus ? ` Focus on: ${focus}.` : ''} If the page cannot be retrieved, reply exactly: PAGE_UNAVAILABLE`
+const REFUSAL = /^(sorry|i'?m sorry|i can(?:no|')t|抱歉|很抱歉)/i
+
 const READ_PROMPT = (url: string, focus?: string) => `Open ${url} and reproduce its main content as faithfully as possible in Markdown: keep headings, lists, tables, code, numbers and caveats verbatim; omit navigation, ads and footers. Do not summarize or add commentary.${focus ? ` Focus on: ${focus}.` : ''} If the page cannot be retrieved, reply exactly: PAGE_UNAVAILABLE`
 
 gemini.fetch = async (r, env) => {
@@ -358,12 +362,12 @@ openai.fetch = async (r, env) => {
   let host = ''
   try { host = new URL(r.url).hostname } catch { /* validated upstream */ }
   const data = await env.http.json(joinUrl(env.baseURL, 'https://api.openai.com', '/v1/responses'), {
-    body: { model: String(env.options.model || 'gpt-5-mini'), tools: [{ type: 'web_search', ...(host ? { filters: { allowed_domains: [host.replace(/^www\./, '')] } } : {}) }], input: READ_PROMPT(r.url, r.focus) },
+    body: { model: String(env.options.model || 'gpt-5-mini'), tools: [{ type: 'web_search', ...(host ? { filters: { allowed_domains: [host.replace(/^www\./, '')] } } : {}) }], input: DIGEST_PROMPT(r.url, r.focus) },
     headers: { authorization: `Bearer ${key}` }, signal: r.signal, timeoutMs: r.timeoutMs,
   })
   if (data.error) throw new SourceError(`OpenAI: ${str(data.error.message) ?? 'error'}`, 'upstream')
   const text = arr(data.output).filter(i => i.type === 'message').flatMap(i => arr(i.content)).filter(p => p.type === 'output_text').map(p => str(p.text) ?? '').join('')
-  if (/PAGE_UNAVAILABLE/.test(text)) return { url: r.url, content: '', statusCode: 502, generated: true }
+  if (/PAGE_UNAVAILABLE/.test(text) || (text.length < 400 && REFUSAL.test(text.trim()))) return { url: r.url, content: '', statusCode: 502, generated: true }
   return { url: r.url, content: text, generated: true }
 }
 

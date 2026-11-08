@@ -329,3 +329,29 @@ test('settings service reports readiness and writes only credentials the setting
   await assert.rejects(service.setCredential({ ref: 'OPENAI_API_KEY_OTHER', value: 'x' }, signal), /不属于本插件/)
   assert.deepEqual(await service.clearCredential({ ref: 'EXA_API_KEY' }, signal), { configured: false })
 })
+
+test('live-test fixes: Bright Data parsed_light, Nimble without rendering, Arctic Shift title fallback', async t => {
+  const calls = mockFetch(t, [
+    ['https://api.brightdata.com/request', () => ({ json: { general: {}, input: {}, organic: [{ link: 'https://bd.com/a', title: 'BD', description: 'bright data organic result' }] } })],
+    ['https://sdk.nimbleway.com/v2/extract', () => ({ json: { data: { markdown: 'nimble page '.repeat(40) }, status_code: 200 } })],
+    [url => url.includes('/api/posts/search') && url.includes('query='), () => ({ status: 422, json: { data: null, error: 'Timeout. Maybe slow down a bit' } })],
+    [url => url.includes('/api/posts/search') && url.includes('title='), () => ({ json: { data: [{ permalink: '/r/rust/comments/abc/tokio/', title: 'Tokio thread', selftext: 'scheduler', created_utc: 1700000000 }] } })],
+  ])
+  const { call } = await boot(t, { sources: only(['brightdata', 'nimble', 'arcticshift'], { brightdata: { options: { serpZone: 'serp_zone' } } }) }, { credentials: { BRIGHTDATA_API_KEY: 'bd-key-123456', NIMBLE_API_KEY: 'nb-key-123456' } })
+  const bd = await call('search', { queries: ['rust edition'], sources: ['brightdata'] })
+  assert.match(bd.text, /https:\/\/bd\.com\/a/)
+  const bdCall = calls.find(c => c.url.startsWith('https://api.brightdata.com'))
+  assert.equal(bdCall.body.data_format, 'parsed_light')
+  assert.doesNotMatch(bdCall.body.url, /brd_json/)
+  await call('fetch', { urls: ['https://n.com/'], services: ['nimble'] })
+  assert.equal(calls.find(c => c.url.startsWith('https://sdk.nimbleway.com')).body.render, false)
+  const reddit = await call('search', { queries: ['tokio'], sources: ['arcticshift'], sites: ['reddit.com/r/rust'] })
+  assert.match(reddit.text, /comments\/abc\/tokio/)
+})
+
+test('an OpenAI refusal to read a page counts as a failed read, not content', async t => {
+  mockFetch(t, [['https://api.openai.com/v1/responses', () => ({ json: { output: [{ type: 'message', content: [{ type: 'output_text', text: 'Sorry, I can’t reproduce the full article verbatim. I can summarize it instead.' }] }] } })]])
+  const { call } = await boot(t, { sources: only(['openai']), overrides: { fetchRetries: 0 } }, { credentials: { OPENAI_API_KEY: 'sk-openai-123456' } })
+  const out = await call('fetch', { urls: ['https://o.com/page'], services: ['openai'] })
+  assert.doesNotMatch(out.text, /I can summarize it instead/)
+})

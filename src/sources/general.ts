@@ -212,7 +212,7 @@ export const nimble: SourceAdapter = {
     caps: { search: true, fetch: true, render: true }, types: ['web', 'news', 'company'],
     filters: { site: true, time: true, language: true, region: true }, credential: 'NIMBLE_API_KEY',
     blurb: '实时 SERP 与浏览器渲染抓取，适合需要处理动态页面、补全企业或人物资料的任务',
-    options: { depth: 'lite' },
+    options: { depth: 'lite', render: false },
   },
   async search(q, env) {
     const key = requireKey(env.apiKey, 'Nimble')
@@ -232,7 +232,8 @@ export const nimble: SourceAdapter = {
   async fetch(r, env) {
     const key = requireKey(env.apiKey, 'Nimble')
     const data = await env.http.json(joinUrl(env.baseURL, 'https://sdk.nimbleway.com', '/v2/extract'), {
-      body: { url: r.url, render: true, formats: ['markdown'], markdown_backend: 'main_content' },
+      // Browser rendering took over two minutes in live tests; opt in per source when pages need JS.
+      body: { url: r.url, render: Boolean(env.options.render), formats: ['markdown'], markdown_backend: 'main_content' },
       headers: { authorization: `Bearer ${key}` }, signal: r.signal, timeoutMs: r.timeoutMs,
     })
     return { url: r.url, content: str(data.data?.markdown) ?? '', statusCode: num(data.status_code) }
@@ -449,12 +450,12 @@ export const brightdata: SourceAdapter = {
     const target = new URL('https://www.google.com/search')
     target.searchParams.set('q', withSiteOperators(q.query, q.need))
     target.searchParams.set('num', String(Math.min(20, q.maxResults)))
-    target.searchParams.set('brd_json', '1')
     if (q.need.language) target.searchParams.set('hl', q.need.language)
     if (q.need.region) target.searchParams.set('gl', q.need.region.toLowerCase())
     if (q.need.timeRange) target.searchParams.set('tbs', `qdr:${q.need.timeRange[0]}`)
     const data = await env.http.json(joinUrl(env.baseURL, 'https://api.brightdata.com', '/request'), {
-      body: { zone, url: target.toString(), format: 'raw' }, headers: { authorization: `Bearer ${key}` }, signal: q.signal, timeoutMs: q.timeoutMs,
+      // `brd_json=1` now yields only general/input for Google; `parsed_light` returns the organic list.
+      body: { zone, url: target.toString(), format: 'raw', data_format: 'parsed_light' }, headers: { authorization: `Bearer ${key}` }, signal: q.signal, timeoutMs: q.timeoutMs,
     })
     return { hits: hits(arr(data.organic).map(r => hit(r.link ?? r.url, { title: str(r.title), snippet: clip(str(r.description) ?? str(r.snippet), SNIPPET) }))) }
   },
