@@ -13,7 +13,9 @@ const FLAG_LABEL: Record<string, string> = {
 export function renderSearch(outcome: SearchOutcome): string {
   const lines: string[] = [UNTRUSTED, '']
   const sourceIds = outcome.route.sources.map(s => s.id)
-  lines.push(`Search ${outcome.searchId} · ${outcome.route.mode === 'more' ? '剩余候选' : `来源 ${sourceIds.join(', ') || '无'}`} · 去重后 ${outcome.stats.unique} 条（原始 ${outcome.stats.rawHits}）· ${STOP_LABEL[outcome.stop]} · ${(outcome.stats.elapsedMs / 1000).toFixed(1)}s`)
+  const count = outcome.route.count
+  const countNote = count ? `（${{ call: '调用参数', decision: '决策模型', profile: '档位' }[count.by]}定 ${count.count} 个，范围 ${count.min}–${count.max}）` : ''
+  lines.push(`Search ${outcome.searchId} · ${outcome.route.mode === 'more' ? '剩余候选' : `来源 ${sourceIds.join(', ') || '无'}${countNote}`} · 去重后 ${outcome.stats.unique} 条（原始 ${outcome.stats.rawHits}）· ${STOP_LABEL[outcome.stop]} · ${(outcome.stats.elapsedMs / 1000).toFixed(1)}s`)
   lines.push('')
   if (outcome.results.length === 0) lines.push('No results found.')
   for (const r of outcome.results) {

@@ -128,6 +128,13 @@ github:forever-lwy/dsh-multisearch
 3. 启用决策模型并选择 `route` 环节时，加入模型给出的语义适配分。
 4. 需求不明确时用 `routing.defaultSources`，不足时只用通用网页来源补齐；中文查询优先加入中文来源。
 
+自动选源用几个来源，按以下顺序决定，结果总是限制在 `routing.minSources`–`routing.maxSources`（默认 1–6，另受硬性上限 `maxParallelSources` 约束）之内：
+- 调用时传了 `options.parallel_sources`：按它。
+- 否则，启用了决策模型选源（`route` 环节）并且拿到了评分：适配分 ≥ `routing.fitThreshold`（默认 0.6）的来源有几个就用几个。
+- 否则按档位的并行来源数：fast 1、balanced 2、deep 4。
+
+搜索结果第一行会写明数量由谁决定，例如“来源 exa, tavily（决策模型定 2 个，范围 1–6）”。显式指定 `sources` 时不受这个范围限制。
+
 补搜触发条件：去重后结果不足、多个来源高度重复、缺少要求的资料类型、所有来源失败。默认只把建议（可尝试的来源和备选查询）返回给模型；`auto_follow_up` 或 deep 档位会在本次调用的来源范围、约束和时间预算内自动补搜：先复用本任务已有候选，再在未尝试的来源上用当前查询，最后才用调用方给的 `alt_queries`。
 
 ## 结果重排

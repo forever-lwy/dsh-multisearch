@@ -85,7 +85,7 @@ test('missing type triggers follow-up: suggestion by default, automatic with aut
   // exa (high priority) covers academic; only hackernews covers community, so community is missing after round one.
   const suggested = await call('search', { queries: ['tool x review'], source_types: ['academic', 'community'], options: { parallel_sources: 1 } })
   assert.equal(suggested.isError, false, suggested.text)
-  assert.match(suggested.text, /来源 exa ·/)
+  assert.match(suggested.text, /来源 exa（调用参数定 1 个，范围 1–6） ·/)
   assert.match(suggested.text, /补搜建议（缺少要求的资料类型）/)
   assert.match(suggested.text, /可尝试来源：hackernews/)
   assert.ok(!calls.some(c => c.url.startsWith('https://hn.algolia.com')), 'no automatic follow-up by default')
@@ -583,4 +583,24 @@ test('fetch shares one size budget across pages: short pages whole, long pages c
   const single = await call('fetch', { urls: [urls[2]] })
   assert.doesNotMatch(single.text, /返回预算/)
   assert.match(out.text, /S1、S2 已截短/)
+})
+
+test('decision-model routing decides how many sources a fast search uses, within the configured range', async t => {
+  const calls = mockFetch(t, [
+    ['https://api.exa.ai/search', () => ({ json: exaHits(['https://e.com/1']) })],
+    ['https://api.tavily.com/search', () => ({ json: tavilyHits(['https://t.com/1']) })],
+    ['https://hn.algolia.com/api/v1/search', () => ({ json: { hits: [] } })],
+    ['https://dec.example/v1/systemone', (url, init, body) => ({ json: { answers: Object.fromEntries(Object.entries(body.questions).map(([id], i) => {
+      const source = body.state.sources.find(s => s.id === id).source
+      return [id, { type: 'score', score: source === 'hackernews' ? 0.5 : 3.5, confidence: 0.8 }]
+    })) } })],
+  ])
+  const { call } = await boot(t, {
+    sources: only(['exa', 'tavily', 'hackernews']),
+    routing: { minSources: 1, maxSources: 3 },
+    decision: { enabled: true, backend: 'decisions', protocol: 'systemone', baseURL: 'https://dec.example/v1', model: 'jev', stages: ['route'] },
+  }, { credentials: { EXA_API_KEY: 'k-exa-123456', TAVILY_API_KEY: 'tvly-123456', DECISION_API_KEY: 'k' } })
+  const out = await call('search', { queries: ['x'], profile: 'fast' })
+  assert.match(out.text, /来源 (exa, tavily|tavily, exa)（决策模型定 2 个，范围 1–3）/, out.text)
+  assert.ok(!calls.some(c => c.url.startsWith('https://hn.algolia.com')))
 })

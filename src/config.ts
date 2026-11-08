@@ -89,7 +89,13 @@ export interface Config {
   tools: { search: boolean; fetch: boolean; searchName: string; fetchName: string; guidance: boolean }
   overrides: Partial<Tuning>
   limits: Limits
-  routing: { autoRoute: boolean; defaultSources: string[]; rules: RouteRule[]; overlapPenalty: number; officialDomains: string[] }
+  routing: {
+    autoRoute: boolean; defaultSources: string[]; rules: RouteRule[]; overlapPenalty: number; officialDomains: string[]
+    /** Bounds on how many sources one automatic search uses (explicit `sources` are not bounded). */
+    minSources: number; maxSources: number
+    /** With decision-model routing, sources scoring at least this fit are used (within the bounds). */
+    fitThreshold: number
+  }
   fetching: { order: string[]; allowPrivateNetwork: boolean; minContentChars: number; preferRender: string[] }
   rerank: { mode: 'rules' | 'service' | 'model'; provider: RerankProvider; url: string; apiKey: string; model: string }
   decision: {
@@ -185,6 +191,9 @@ export const Config: z<Config> = z.object({
   }).volatile().description('硬性上限（单次调用参数和逐项设置都不能超过）'),
   routing: z.object({
     autoRoute: z.boolean().default(true).description('按需求自动选源'),
+    minSources: z.natural().default(1).description('自动选源时至少使用的来源数（档位或调用参数更少时按此值）'),
+    maxSources: z.natural().default(6).description('自动选源时最多使用的来源数（另受硬性上限“并行来源数上限”约束）'),
+    fitThreshold: z.number().min(0).max(1).default(0.6).description('决策模型选源时，适配分不低于此值的来源都会使用（数量限制在上面的范围内）'),
     defaultSources: z.array(z.string()).default(['exa', 'tavily', 'keenable', 'brave', 'builtin']).description('需求不明确时的通用组合（按顺序取可用来源）'),
     rules: z.array(z.object({
       name: z.string().default(''),
@@ -278,6 +287,24 @@ export function effectiveTuning(config: Config, profile: ProfileName | undefined
     snippetChars: clamp(merged.snippetChars, 2000, 80),
     duplicateRatio: Math.max(0, Math.min(1, merged.duplicateRatio)),
   }
+}
+
+/**
+ * How many sources an automatic search uses, within [minSources, maxSources] (and the hard limit):
+ * the per-call `parallel_sources` when given, else the decision model's count of well-fitting
+ * sources when it scored them, else the profile's parallelSources.
+ */
+export function sourceCount(config: Config, tuning: Tuning, call: Partial<Tuning> | undefined, semantic?: Map<string, number>): { count: number; min: number; max: number; by: 'call' | 'decision' | 'profile' } {
+  const r = config.routing
+  const min = Math.max(1, Math.min(r.minSources ?? 1, config.limits.maxParallelSources))
+  const max = Math.max(min, Math.min(r.maxSources ?? 6, config.limits.maxParallelSources))
+  const clampCount = (n: number) => Math.max(min, Math.min(max, n))
+  if (call?.parallelSources !== undefined) return { count: clampCount(tuning.parallelSources), min, max, by: 'call' }
+  if (semantic && semantic.size > 0) {
+    const fit = [...semantic.values()].filter(score => score >= (r.fitThreshold ?? 0.6)).length
+    return { count: clampCount(fit), min, max, by: 'decision' }
+  }
+  return { count: clampCount(tuning.parallelSources), min, max, by: 'profile' }
 }
 
 export function sourceSettings(config: Config, id: string): SourceSettings {

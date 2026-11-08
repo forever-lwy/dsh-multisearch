@@ -1,6 +1,6 @@
 /** Orchestration: source registry, search with follow-up, fetch with fallback, crawl. */
 import type { Config, Tuning } from './config.js'
-import { effectiveTuning, sourceSettings } from './config.js'
+import { effectiveTuning, sourceCount, sourceSettings } from './config.js'
 import type { AdapterEnv, Candidate, FetchedPage, ProfileName, ResourceType, SearchNeed, SourceAdapter, SourceRun, StopReason } from './types.js'
 import { STATIC_ADAPTERS, builtinWeb, directHttp, rerankService } from './sources/index.js'
 import { SourceError, errorCode, errorText, http, pool, redact } from './http.js'
@@ -55,7 +55,7 @@ export interface SearchOutcome {
   generated: { source: string; query: string; text: string }[]
   remaining: number
   stats: { rawHits: number; unique: number; duplicateRatio: number; elapsedMs: number; rounds: number; profile: string }
-  route: { mode: RoutePlan['mode'] | 'more'; sources: { id: string; reasons: string[] }[]; unavailable: { id: string; reason: string }[]; inferredTypes: ResourceType[] }
+  route: { mode: RoutePlan['mode'] | 'more'; count?: ReturnType<typeof sourceCount>; sources: { id: string; reasons: string[] }[]; unavailable: { id: string; reason: string }[]; inferredTypes: ResourceType[] }
   runs: SourceRun[]
   stop: StopReason
   followUp?: { reasons: string[]; performed: string[]; suggestedSources: string[]; suggestedQueries: string[]; advice?: string }
@@ -166,7 +166,8 @@ export class Engine {
       const usable = sources.filter(s => s.spec.caps.search && s.settings.enabled && s.usable).map(s => s.spec)
       semantic = await this.deps.decision.routeScores(need, usable, deadline)
     }
-    const plan = planRoute({ need, explicit: input.sources, config, sources, count: tuning.parallelSources, semantic })
+    const sized = sourceCount(config, tuning, input.tuning, semantic)
+    const plan = planRoute({ need, explicit: input.sources, config, sources, count: sized.count, semantic })
     const runs: SourceRun[] = []
     const generated: SearchOutcome['generated'] = []
     const lists: RankedList[] = []
@@ -223,7 +224,7 @@ export class Engine {
         ...(advice?.trySources ?? []).filter(id => untried.some(c => c.id === id)),
         ...untried.filter(c => missing.some(type => specs.get(c.id)!.settings.types.includes(type))).map(c => c.id),
         ...untried.map(c => c.id),
-      ].filter((id, index, all) => all.indexOf(id) === index).slice(0, Math.max(1, tuning.parallelSources))
+      ].filter((id, index, all) => all.indexOf(id) === index).slice(0, Math.max(1, sized.count))
       let queries = need.queries
       let ids = pick
       if (ids.length === 0) {
@@ -279,7 +280,7 @@ export class Engine {
       generated: generated.map(g => ({ ...g, text: g.text.slice(0, Math.max(400, Math.floor(tuning.outputTokens * 0.8))) })),
       remaining: entries.length - shown.length,
       stats: { ...merged.stats, elapsedMs: Date.now() - started, rounds, profile: input.profile ?? config.profile },
-      route: { mode: plan.mode, sources: [...tried].map(id => ({ id, reasons: plan.chosen.find(c => c.id === id)?.reasons ?? plan.reserve.find(c => c.id === id)?.reasons ?? ['补搜'] })), unavailable: plan.unavailable, inferredTypes: plan.inferredTypes },
+      route: { mode: plan.mode, ...(plan.mode === 'explicit' ? {} : { count: sized }), sources: [...tried].map(id => ({ id, reasons: plan.chosen.find(c => c.id === id)?.reasons ?? plan.reserve.find(c => c.id === id)?.reasons ?? ['补搜'] })), unavailable: plan.unavailable, inferredTypes: plan.inferredTypes },
       runs,
       stop,
       followUp: reasons.length || performed.length ? { reasons, performed, ...suggestions, ...(advice?.reason ? { advice: advice.reason } : {}) } : undefined,
