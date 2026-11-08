@@ -604,3 +604,19 @@ test('decision-model routing decides how many sources a fast search uses, within
   assert.match(out.text, /来源 (exa, tavily|tavily, exa)（决策模型定 2 个，范围 1–3）/, out.text)
   assert.ok(!calls.some(c => c.url.startsWith('https://hn.algolia.com')))
 })
+
+test('resident definitions omit source/service lists; unknown ids answer with the enabled list', async t => {
+  const { ctx, call } = await boot(t, { sources: only(['exa', 'tavily', 'jina', 'http']) }, { credentials: { EXA_API_KEY: 'k', TAVILY_API_KEY: 'k' } })
+  for (const name of ['search', 'fetch']) {
+    const schema = ctx.tools.schemas().find(s => s.name === name)
+    const size = JSON.stringify(schema).length
+    assert.ok(size < (name === 'search' ? 2900 : 2000), `${name} definition grew to ${size} chars`)
+    assert.ok(!JSON.stringify(schema).includes('tavily'), `${name} must not list source ids`)
+  }
+  const search = await call('search', { queries: ['x'], sources: ['nope'] })
+  assert.equal(search.isError, true)
+  assert.match(search.text, /未知或未启用的 sources：nope；可用：.*exa/)
+  const fetched = await call('fetch', { urls: ['https://example.com'], services: ['nope'] })
+  assert.equal(fetched.isError, true)
+  assert.match(fetched.text, /未知或未启用的 services：nope；可用：.*http/)
+})

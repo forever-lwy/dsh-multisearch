@@ -1,6 +1,6 @@
 {
   "name": "@forever-lwy/dsh-multisearch",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Multi-source search and page fetching for DeepSeek Harness: source routing, parallel search, dedupe, rank fusion, fallback fetching, optional decision model, and a deep-research skill",
   "type": "module",
   "main": "lib/index.js",
@@ -28,7 +28,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build-client.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test --test-isolation=none test/*.test.mjs",
+    "test": "node --test --test-isolation=none --test-timeout=60000 test/*.test.mjs",
     "release": "node scripts/release.mjs"
   },
   "dependencies": {
