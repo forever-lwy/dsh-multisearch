@@ -21,7 +21,9 @@ github:forever-lwy/dsh-multisearch
 - **常规与档位**：默认档位、工具名、逐项覆盖档位值（留空跟随档位）、硬性上限。
 - **路由与抓取**、**重排与决策模型**、**深度研究**：对应下文各节。
 
-页面其余改动点“保存”后立即生效，不需要重启（所有设置都是热更新字段，工具名、工具说明和深度研究技能会随之重建）。默认只启用无需 Key 的来源（Keenable 公开端点、Jina Reader、Hacker News、Hugging Face、Context7、Arctic Shift、DSH 内置网页服务、直接请求）。
+页面其余改动点“保存”后立即生效，不需要重启（所有设置都是热更新字段，工具名、工具说明和深度研究技能会随之重建）。
+
+工具说明不再列出启用的来源和读取服务（0.1.10 起 search 约 2.5KB、fetch 约 1.9KB，原为 3.8KB / 2.8KB）。模型很少需要强制指定来源；在 `sources` 或 `services` 里填了未知或未启用的 id 时，工具会报错并列出当前可用的 id。默认只启用无需 Key 的来源（Keenable 公开端点、Jina Reader、Hacker News、Hugging Face、Context7、Arctic Shift、DSH 内置网页服务、直接请求）。
 
 要让模型只用本插件，请在 Agent 预设中停用内置 `@deepseek-ai/dsh-tool-web`（两者工具名不同，可以并存）。
 
