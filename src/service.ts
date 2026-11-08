@@ -7,11 +7,21 @@ import type { Engine } from './engine.js'
 import { RESOURCE_TYPES } from './types.js'
 import { SERVICE, credentialRequestSchema, skillSaveSchema, type MultisearchStatus, type ProviderModels, type SkillStatus } from './remote.js'
 import type { SkillFile } from './skillfile.js'
+import type { DecisionModel } from './decision.js'
+import { DECISION_DEFAULT_KEY, rerankTarget } from './presets.js'
+import { rerankService } from './sources/index.js'
+import type { ProbeResult } from './remote.js'
+
+export interface ServiceDeps {
+  decision: DecisionModel
+  llm: () => any
+  resolveKey: (ref: string) => Promise<string | undefined>
+}
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error)
 
 export class MultisearchService extends TypertRemoteService {
-  constructor(ctx: Context, private readonly engine: Engine, private readonly config: () => Config, private readonly skillFile?: SkillFile) {
+  constructor(ctx: Context, private readonly engine: Engine, private readonly config: () => Config, private readonly skillFile?: SkillFile, private readonly deps?: ServiceDeps) {
     super(ctx, SERVICE)
   }
 
@@ -39,8 +49,17 @@ export class MultisearchService extends TypertRemoteService {
       const ref = sourceSettings(config, spec.id).apiKey || spec.credential
       refs.add(ref)
     }
-    if (config.rerank.apiKey) refs.add(config.rerank.apiKey)
+    for (const ref of this.extraRefs(config)) refs.add(ref)
     return refs
+  }
+
+  /** Credentials used outside sources: the rerank service and an own decision-model endpoint. */
+  private extraRefs(config: Config): string[] {
+    const refs: string[] = []
+    const rerank = rerankTarget(config.rerank).apiKey
+    if (rerank) refs.push(rerank)
+    if ((config.decision.backend ?? 'dsh') === 'openai') refs.push(config.decision.apiKey || DECISION_DEFAULT_KEY)
+    return [...new Set(refs)]
   }
 
   @Remote
@@ -63,7 +82,7 @@ export class MultisearchService extends TypertRemoteService {
         fetchReady: spec.caps.fetch ? { ok: Boolean(source.fetchUsable), ...(source.fetchUsable ? {} : { reason: source.fetchReason ?? '不可用' }) } : { ok: false, reason: '不支持抓取' },
       }
     }))
-    const extra = config.rerank.apiKey ? [{ ref: config.rerank.apiKey, ...(await this.describe(config.rerank.apiKey)) }] : []
+    const extra = await Promise.all(this.extraRefs(config).map(async ref => ({ ref, ...(await this.describe(ref)) })))
     return {
       sources, extraCredentials: extra, resourceTypes: [...RESOURCE_TYPES],
       presets: JSON.parse(JSON.stringify(PRESETS)), defaultFetchOrder: [...DEFAULT_FETCH_ORDER],
@@ -145,9 +164,39 @@ export class MultisearchService extends TypertRemoteService {
   }
 
   @Remote
+  async testDecision(request: unknown, signal: AbortSignal): Promise<ProbeResult> {
+    void request
+    if (!this.deps) return { ok: false, detail: '决策模型不可用', ms: 0 }
+    return this.deps.decision.probe(AbortSignal.any([signal, AbortSignal.timeout(Math.max(5000, this.config().decision.timeoutMs + 2000))]))
+  }
+
+  @Remote
+  async testRerank(request: unknown, signal: AbortSignal): Promise<ProbeResult> {
+    void request
+    const started = Date.now()
+    const target = rerankTarget(this.config().rerank)
+    if (!target.url || !target.model) return { ok: false, detail: '未填写重排服务地址或模型', ms: 0 }
+    try {
+      const apiKey = target.apiKey ? await this.deps?.resolveKey(target.apiKey) : undefined
+      if (target.apiKey && !apiKey) return { ok: false, detail: `未配置 ${target.apiKey}`, ms: 0 }
+      const results = await rerankService({
+        url: target.url, apiKey, model: target.model, query: 'What is the capital of France?',
+        documents: ['Paris is the capital and largest city of France.', 'Bananas are rich in potassium.'], topN: 2, signal, timeoutMs: 15_000,
+      })
+      const best = [...results].sort((a, b) => b.score - a.score)[0]
+      if (!best) return { ok: false, detail: '服务没有返回结果', ms: Date.now() - started }
+      return best.index === 0
+        ? { ok: true, detail: `排序正确（${target.model}，得分 ${best.score.toFixed(3)}）`, ms: Date.now() - started }
+        : { ok: false, detail: '服务有返回，但排序不符合预期', ms: Date.now() - started }
+    } catch (error) {
+      return { ok: false, detail: errorText(error).slice(0, 300), ms: Date.now() - started }
+    }
+  }
+
+  @Remote
   async models(request: unknown, signal: AbortSignal): Promise<ProviderModels> {
     void request
-    const llm = (this.ctx as any).get?.('llm')
+    const llm = this.deps?.llm() ?? (this.ctx as any).get?.('llm')
     if (!llm) return { providers: [] }
     const providers = (llm.listProviders?.() ?? []) as { id: string; name: string }[]
     return {

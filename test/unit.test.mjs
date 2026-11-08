@@ -200,3 +200,13 @@ test('skill file: seeded once, follows settings while untouched, keeps edits, re
   assert.equal(validateSkillFile('---\nname: Bad Name\ndescription: x\n---\nbody'), 'name "Bad Name" 必须是小写字母、数字和连字符')
   assert.equal(validateSkillFile('---\nname: ok\ndescription: x\nmodelInvocable: true\n---\nbody'), '不支持 modelInvocable，请用 disable-model-invocation / user-invocable')
 })
+
+test('rerank presets and chat completions URL', async () => {
+  const { rerankTarget } = await import('../lib/presets.js')
+  const { chatCompletionsUrl } = await import('../lib/decision.js')
+  assert.deepEqual(rerankTarget({ provider: 'siliconflow' }), { url: 'https://api.siliconflow.cn/v1/rerank', apiKey: 'SILICONFLOW_API_KEY', model: 'BAAI/bge-reranker-v2-m3' })
+  assert.deepEqual(rerankTarget({ provider: 'siliconflow', model: 'BAAI/bge-reranker-v2-gemma' }).model, 'BAAI/bge-reranker-v2-gemma')
+  assert.deepEqual(rerankTarget(parsed().rerank), { url: 'https://api.jina.ai/v1/rerank', apiKey: 'JINA_API_KEY', model: 'jina-reranker-v2-base-multilingual' })
+  assert.equal(chatCompletionsUrl('https://api.siliconflow.cn/v1/'), 'https://api.siliconflow.cn/v1/chat/completions')
+  assert.equal(chatCompletionsUrl('https://x.com/v1/chat/completions'), 'https://x.com/v1/chat/completions')
+})

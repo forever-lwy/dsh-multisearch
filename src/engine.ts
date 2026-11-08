@@ -11,6 +11,7 @@ import type { PageCache, PageRecord, RefEntry, TaskStore } from './store.js'
 import { hostOf, jaccard, matchesSite, normalizeDate, tokens, urlKey } from './text.js'
 import { keywordExcerpt, rangeExcerpt } from './excerpt.js'
 import { markdownLinks } from './html.js'
+import { rerankTarget } from './presets.js'
 
 export interface EngineDeps {
   config: () => Config
@@ -364,7 +365,8 @@ export class Engine {
   }
 
   private async serviceRelevance(need: SearchNeed, candidates: Candidate[], signal: AbortSignal): Promise<Map<string, number> | undefined> {
-    const cfg = this.config.rerank
+    const cfg = rerankTarget(this.config.rerank)
+    if (!cfg.url || !cfg.model) return undefined
     const apiKey = cfg.apiKey ? await this.deps.resolveKey(cfg.apiKey).catch(() => undefined) : undefined
     const results = await rerankService({
       url: cfg.url, apiKey, model: cfg.model, query: [need.goal, ...need.queries].filter(Boolean).join(' '),

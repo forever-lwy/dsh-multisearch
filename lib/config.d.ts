@@ -1,5 +1,6 @@
 /** Settings schema, profile presets and the effective per-call tuning. */
 import z from '@deepseek-ai/schemastery';
+import { type RerankProvider } from './presets.js';
 import type { ProfileName, ResourceType, SourceSpec } from './types.js';
 /** Every per-call execution knob. Presets fill all of them. */
 export interface Tuning {
@@ -83,15 +84,20 @@ export interface Config {
     };
     rerank: {
         mode: 'rules' | 'service' | 'model';
+        provider: RerankProvider;
         url: string;
         apiKey: string;
         model: string;
     };
     decision: {
         enabled: boolean;
+        /** dsh: a provider route configured in DSH; openai: any OpenAI-compatible chat completions endpoint. */
+        backend: 'dsh' | 'openai';
         provider: string;
         model: string;
         reasoning: string;
+        baseURL: string;
+        apiKey: string;
         stages: ('route' | 'rerank' | 'followup')[];
         timeoutMs: number;
         keepThreshold: number;

@@ -54,6 +54,9 @@ export const skillStatusSchema = z.object({
   error: z.string().optional(),
 })
 export type SkillStatus = z.infer<typeof skillStatusSchema>
+export const probeSchema = z.object({ ok: z.boolean(), detail: z.string(), ms: z.number() })
+export type ProbeResult = z.infer<typeof probeSchema>
+
 export const skillSaveSchema = z.object({ content: z.string().min(1).max(200_000) }).strict()
 
 const codec = (schema: z.ZodType, typeSymbol: string) => ({ mode: 'strict' as const, typeSymbol, create: () => schema })
@@ -71,6 +74,8 @@ export const remoteInfo = createTypertRemoteInfo({ package: '@forever-lwy/dsh-mu
   'multisearch/skillStatus': method(empty, skillStatusSchema),
   'multisearch/saveSkill': method(skillSaveSchema, skillStatusSchema),
   'multisearch/restoreSkill': method(empty, skillStatusSchema),
+  'multisearch/testDecision': method(empty, probeSchema),
+  'multisearch/testRerank': method(empty, probeSchema),
 } }, z)
 
 async function invoke<T>(remote: unknown, key: string, request: unknown, signal?: AbortSignal): Promise<T> {
@@ -88,6 +93,8 @@ export interface MultisearchRemote {
   skillStatus(signal?: AbortSignal): Promise<SkillStatus>
   saveSkill(content: string, signal?: AbortSignal): Promise<SkillStatus>
   restoreSkill(signal?: AbortSignal): Promise<SkillStatus>
+  testDecision(signal?: AbortSignal): Promise<ProbeResult>
+  testRerank(signal?: AbortSignal): Promise<ProbeResult>
 }
 
 export function bindRemote(remote: unknown): MultisearchRemote {
@@ -99,5 +106,7 @@ export function bindRemote(remote: unknown): MultisearchRemote {
     skillStatus: signal => invoke(remote, 'multisearch/skillStatus', {}, signal),
     saveSkill: (content, signal) => invoke(remote, 'multisearch/saveSkill', { content }, signal),
     restoreSkill: signal => invoke(remote, 'multisearch/restoreSkill', {}, signal),
+    testDecision: signal => invoke(remote, 'multisearch/testDecision', {}, signal),
+    testRerank: signal => invoke(remote, 'multisearch/testRerank', {}, signal),
   }
 }

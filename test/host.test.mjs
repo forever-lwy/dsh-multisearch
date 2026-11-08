@@ -433,3 +433,74 @@ test('TinyFish maps filters to query parameters and per-URL errors to page state
   const wall = await call('fetch', { urls: ['https://site.com/login'], services: ['tinyfish'] })
   assert.match(wall.text, /blocked/)
 })
+
+test('rerank presets: SiliconFlow BGE-Reranker-v2-m3 with its own key reorders results', async t => {
+  const calls = mockFetch(t, [
+    ['https://api.exa.ai/search', () => ({ json: exaHits(['https://one.com', 'https://two.com', 'https://three.com']) })],
+    ['https://api.siliconflow.cn/v1/rerank', (url, init, body) => ({ json: { id: 'r', results: body.documents.map((d, index) => ({ index, relevance_score: index === 2 ? 0.98 : 0.02 })) } })],
+  ])
+  const { call } = await boot(t, { sources: only(['exa']), rerank: { mode: 'service', provider: 'siliconflow' } }, { credentials: { EXA_API_KEY: 'k-exa-123456', SILICONFLOW_API_KEY: 'sk-sf-123456' } })
+  const ranked = await call('search', { queries: ['x'], sources: ['exa'] })
+  const order = [...ranked.text.matchAll(/^\s+(https:\/\/\w+\.com)/gm)].map(m => m[1])
+  assert.equal(order[0], 'https://three.com', ranked.text)
+  const rerank = calls.find(c => c.url === 'https://api.siliconflow.cn/v1/rerank')
+  assert.equal(rerank.body.model, 'BAAI/bge-reranker-v2-m3')
+  assert.equal(rerank.headers.authorization, 'Bearer sk-sf-123456')
+})
+
+test('decision model on its own OpenAI-compatible endpoint, independent of DSH providers', async t => {
+  let reply = '{"relevance":{"c1":0.05,"c2":0.1,"c3":0.99}}'
+  const calls = mockFetch(t, [
+    ['https://api.exa.ai/search', () => ({ json: exaHits(['https://one.com', 'https://two.com', 'https://three.com']) })],
+    ['https://llm.example/v1/chat/completions', () => ({ json: { choices: [{ message: { role: 'assistant', content: reply } }] } })],
+  ])
+  const { call } = await boot(t, {
+    sources: only(['exa']),
+    decision: { enabled: true, backend: 'openai', baseURL: 'https://llm.example/v1/', model: 'Qwen/Qwen3-8B', stages: ['rerank'] },
+  }, { credentials: { EXA_API_KEY: 'k-exa-123456', DECISION_API_KEY: 'sk-dec-123456' } })
+  const ranked = await call('search', { queries: ['x'], sources: ['exa'] })
+  const order = [...ranked.text.matchAll(/^\s+(https:\/\/\w+\.com)/gm)].map(m => m[1])
+  assert.equal(order[0], 'https://three.com', ranked.text)
+  const chat = calls.find(c => c.url.endsWith('/chat/completions'))
+  assert.equal(chat.body.model, 'Qwen/Qwen3-8B')
+  assert.equal(chat.headers.authorization, 'Bearer sk-dec-123456')
+  assert.equal(chat.body.messages[0].role, 'system')
+  reply = 'sorry'
+  const fallback = await call('search', { queries: ['x'], sources: ['exa'] })
+  assert.equal(fallback.isError, false)
+})
+
+test('settings service: rerank and decision keys are writable; test buttons report results', async t => {
+  const { Context } = await import('@deepseek-ai/cordis')
+  const { TypertRegistry } = await import('@deepseek-ai/dsh-typert-registry')
+  const Plugin = await import('../lib/index.js')
+  const { PageCache } = await import('../lib/store.js')
+  const { DecisionModel } = await import('../lib/decision.js')
+  mockFetch(t, [
+    ['https://api.siliconflow.cn/v1/rerank', () => ({ json: { results: [{ index: 0, relevance_score: 0.97 }, { index: 1, relevance_score: 0.01 }] } })],
+    ['https://llm.example/v1/chat/completions', () => ({ json: { choices: [{ message: { content: '```json\n{"ok":true}\n```' } }] } })],
+  ])
+  const ctx = new Context()
+  t.after(() => ctx.fiber.dispose())
+  new TypertRegistry(ctx)
+  const store = new Map([['SILICONFLOW_API_KEY', 'sk-sf'], ['DECISION_API_KEY', 'sk-dec']])
+  ctx.provide('credentials'); ctx.set('credentials', {
+    describe: async ref => ({ configured: store.has(String(ref)), writable: true }),
+    resolve: async ref => store.has(String(ref)) ? { value: store.get(String(ref)) } : undefined,
+    set: async (ref, value) => { store.set(String(ref), value) }, unset: async ref => { store.delete(String(ref)) },
+  })
+  const config = Plugin.snapshotConfig(Plugin.Config({ rerank: { mode: 'service', provider: 'siliconflow' }, decision: { enabled: true, backend: 'openai', baseURL: 'https://llm.example/v1', model: 'm' } }))
+  const resolveKey = async ref => store.get(ref)
+  const decision = new DecisionModel(() => config, () => undefined, resolveKey)
+  const engine = new Plugin.Engine({ config: () => config, resolveKey, web: () => undefined, decision, cache: new PageCache() })
+  const service = new Plugin.MultisearchService(ctx, engine, () => config, undefined, { decision, llm: () => undefined, resolveKey })
+  const signal = new AbortController().signal
+  const status = await service.status({}, signal)
+  assert.deepEqual(status.extraCredentials.map(c => c.ref), ['SILICONFLOW_API_KEY', 'DECISION_API_KEY'])
+  assert.deepEqual(await service.setCredential({ ref: 'DECISION_API_KEY', value: 'new' }, signal), { configured: true })
+  const rerank = await service.testRerank({}, signal)
+  assert.equal(rerank.ok, true, rerank.detail)
+  assert.match(rerank.detail, /BAAI\/bge-reranker-v2-m3/)
+  const probe = await service.testDecision({}, signal)
+  assert.equal(probe.ok, true, probe.detail)
+})

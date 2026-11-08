@@ -75,6 +75,12 @@ export declare const skillStatusSchema: z.ZodObject<{
     error: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export type SkillStatus = z.infer<typeof skillStatusSchema>;
+export declare const probeSchema: z.ZodObject<{
+    ok: z.ZodBoolean;
+    detail: z.ZodString;
+    ms: z.ZodNumber;
+}, z.core.$strip>;
+export type ProbeResult = z.infer<typeof probeSchema>;
 export declare const skillSaveSchema: z.ZodObject<{
     content: z.ZodString;
 }, z.core.$strict>;
@@ -92,5 +98,7 @@ export interface MultisearchRemote {
     skillStatus(signal?: AbortSignal): Promise<SkillStatus>;
     saveSkill(content: string, signal?: AbortSignal): Promise<SkillStatus>;
     restoreSkill(signal?: AbortSignal): Promise<SkillStatus>;
+    testDecision(signal?: AbortSignal): Promise<ProbeResult>;
+    testRerank(signal?: AbortSignal): Promise<ProbeResult>;
 }
 export declare function bindRemote(remote: unknown): MultisearchRemote;

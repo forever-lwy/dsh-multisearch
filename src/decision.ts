@@ -5,6 +5,7 @@
  */
 import { BlockAssembler } from '@deepseek-ai/dsh-llm'
 import type { Config } from './config.js'
+import { http } from './http.js'
 import type { Candidate, SearchNeed, SourceSpec } from './types.js'
 
 export interface LlmLike {
@@ -18,16 +19,32 @@ export interface FollowUpAdvice {
   queries: string[]
 }
 
+/** Chat completions URL for an OpenAI-compatible base (`…/v1`) or a full endpoint. */
+export function chatCompletionsUrl(baseURL: string): string {
+  const base = baseURL.trim().replace(/\/+$/, '')
+  return /\/chat\/completions$/.test(base) ? base : `${base}/chat/completions`
+}
+
 export class DecisionModel {
-  constructor(private readonly config: () => Config, private readonly llm: () => LlmLike | undefined) {}
+  constructor(
+    private readonly config: () => Config,
+    private readonly llm: () => LlmLike | undefined,
+    private readonly resolveKey: (ref: string) => Promise<string | undefined> = async () => undefined,
+  ) {}
+
+  /** Why the last call fell back, for the settings page test. */
+  private lastError = ''
 
   enabled(stage: 'route' | 'rerank' | 'followup'): boolean {
     const d = this.config().decision
-    return d.enabled && d.provider !== '' && d.model !== '' && d.stages.includes(stage) && this.llm() !== undefined
+    if (!d.enabled || d.model === '' || !d.stages.includes(stage)) return false
+    return (d.backend ?? 'dsh') === 'openai' ? Boolean(d.baseURL?.trim()) : d.provider !== '' && this.llm() !== undefined
   }
 
   private async ask(system: string, user: string, signal: AbortSignal): Promise<any | undefined> {
     const d = this.config().decision
+    this.lastError = ''
+    if ((d.backend ?? 'dsh') === 'openai') return this.askOpenAI(system, user, signal)
     const llm = this.llm()
     if (!llm) return undefined
     const local = AbortSignal.any([signal, AbortSignal.timeout(d.timeoutMs)])
@@ -38,13 +55,54 @@ export class DecisionModel {
         system, messages: [{ role: 'user', content: [{ type: 'text', text: user }] }], signal: local,
       })) {
         assembler.push(chunk)
-        if (chunk?.type === 'finish' && (chunk.reason?.kind === 'error' || chunk.reason?.kind === 'aborted')) return undefined
+        if (chunk?.type === 'finish' && (chunk.reason?.kind === 'error' || chunk.reason?.kind === 'aborted')) {
+          this.lastError = chunk.reason.kind === 'aborted' ? '已中止或超时' : String(chunk.reason.error?.message ?? chunk.reason.message ?? '模型返回错误')
+          return undefined
+        }
       }
-    } catch {
+    } catch (error) {
+      this.lastError = error instanceof Error ? error.message : String(error)
       return undefined
     }
     const text = assembler.blocks().filter((block: any) => block.type === 'text').map((block: any) => block.text).join('')
-    return parseJson(text)
+    const parsed = parseJson(text)
+    if (parsed === undefined) this.lastError = `未返回 JSON：${text.slice(0, 120)}`
+    return parsed
+  }
+
+  /** A provider configured only for this plugin: plain OpenAI-compatible chat completions. */
+  private async askOpenAI(system: string, user: string, signal: AbortSignal): Promise<any | undefined> {
+    const d = this.config().decision
+    try {
+      const key = d.apiKey ? await this.resolveKey(d.apiKey) : undefined
+      const data = await http.json(chatCompletionsUrl(d.baseURL), {
+        body: {
+          model: d.model, temperature: 0, stream: false,
+          messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+          ...(d.reasoning ? { reasoning_effort: d.reasoning } : {}),
+        },
+        headers: key ? { authorization: `Bearer ${key}` } : {}, signal, timeoutMs: d.timeoutMs,
+      })
+      const content = data?.choices?.[0]?.message?.content
+      const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((part: any) => part?.text ?? '').join('') : ''
+      const parsed = parseJson(text)
+      if (parsed === undefined) this.lastError = `未返回 JSON：${text.slice(0, 120)}`
+      return parsed
+    } catch (error) {
+      this.lastError = error instanceof Error ? error.message : String(error)
+      return undefined
+    }
+  }
+
+  /** One small judgement to check the configured backend end to end (settings page "test"). */
+  async probe(signal: AbortSignal): Promise<{ ok: boolean; detail: string; ms: number }> {
+    const started = Date.now()
+    const d = this.config().decision
+    if (d.model === '' || ((d.backend ?? 'dsh') === 'openai' ? !d.baseURL?.trim() : d.provider === '')) return { ok: false, detail: '未选择供应商或模型', ms: 0 }
+    if ((d.backend ?? 'dsh') === 'dsh' && !this.llm()) return { ok: false, detail: 'DSH 模型服务不可用', ms: 0 }
+    const out = await this.ask('Reply with JSON only: {"ok":true}.', 'Health check.', signal)
+    return out?.ok === true ? { ok: true, detail: '模型返回了有效 JSON', ms: Date.now() - started }
+      : { ok: false, detail: out === undefined ? this.lastError || '调用失败、超时或未返回 JSON' : '返回内容不符合要求', ms: Date.now() - started }
   }
 
   /** Semantic fit 0–1 of each candidate source for the need. */
