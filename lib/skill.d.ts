@@ -2,4 +2,7 @@
 import type { Config } from './config.js';
 export declare const SKILL_NAME = "deep-research";
 export declare function skillContent(config: Config): string;
+export declare const skillDescription: (config: Config) => string;
+export declare const skillWhenToUse = "Only when the user explicitly asks for deep research / a thorough investigation, or enables this skill. Not for ordinary lookups.";
+/** In-memory registration, used in builtin mode or when the skill file cannot be written. */
 export declare function registerSkill(ctx: any, config: Config): () => void;

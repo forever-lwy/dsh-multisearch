@@ -72,10 +72,15 @@ test('the page edits sources, saves leaf writes at the read revision, and stores
     extraCredentials: [], resourceTypes: ['web', 'academic'], presets: { balanced: { returnResults: 8, rerank: true } }, defaultFetchOrder: ['keenable'],
   }
   const keyWrites = []
+  const skillSaves = []
+  let skillState = { mode: 'file', path: '/home/node/.dsh/skills/deep-research/SKILL.md', state: 'synced', content: '---\nname: deep-research\ndescription: x\n---\n\n# Deep research\n', generated: '---\nname: deep-research\ndescription: x\n---\n\n# Deep research\n' }
   const remote = {
     status: async () => status, models: async () => ({ providers: [] }),
     setCredential: async (ref, value) => { keyWrites.push([ref, value]); return { configured: true } },
     clearCredential: async () => ({ configured: false }),
+    skillStatus: async () => skillState,
+    saveSkill: async content => { skillSaves.push(content); skillState = { ...skillState, content, state: 'modified' }; return skillState },
+    restoreSkill: async () => skillState,
   }
   const host = document.createElement('div'); document.body.appendChild(host)
   const local = (await import('react-dom/client')).createRoot(host)
@@ -117,5 +122,18 @@ test('the page edits sources, saves leaf writes at the read revision, and stores
   await click(host.querySelector('[data-action=save]'))
   assert.equal(writes.length, before)
   assert.match(host.textContent, /JSON 无效/)
+  // The skill file is edited in place through the remote, outside the settings draft.
+  await click([...host.querySelectorAll('[role=tab]')].find(b => b.textContent === '深度研究'))
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
+  assert.match(host.textContent, /与设置同步/)
+  assert.match(host.textContent, /skills\/deep-research\/SKILL\.md/)
+  const editor = host.querySelector('textarea[data-skill-editor]')
+  assert.match(editor.value, /# Deep research/)
+  const saveSkill = host.querySelector('[data-skill-action=save]')
+  assert.equal(saveSkill.disabled, true)
+  await setValue(editor, editor.value.replace('# Deep research', '# My research'))
+  await click(saveSkill)
+  assert.match(skillSaves.at(-1), /# My research/)
+  assert.match(host.textContent, /已手动修改/)
   await act(async () => local.unmount())
 })

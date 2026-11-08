@@ -104,6 +104,7 @@ export interface Config {
         timeMinutes: number;
         maxCalls: number;
         modelInvocable: boolean;
+        skillMode: 'file' | 'builtin';
     };
     sources: Record<string, SourceSettings>;
 }

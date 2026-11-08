@@ -5,12 +5,13 @@ import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typer
 import { DEFAULT_FETCH_ORDER, PRESETS, sourceSettings, type Config } from './config.js'
 import type { Engine } from './engine.js'
 import { RESOURCE_TYPES } from './types.js'
-import { SERVICE, credentialRequestSchema, type MultisearchStatus, type ProviderModels } from './remote.js'
+import { SERVICE, credentialRequestSchema, skillSaveSchema, type MultisearchStatus, type ProviderModels, type SkillStatus } from './remote.js'
+import type { SkillFile } from './skillfile.js'
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error)
 
 export class MultisearchService extends TypertRemoteService {
-  constructor(ctx: Context, private readonly engine: Engine, private readonly config: () => Config) {
+  constructor(ctx: Context, private readonly engine: Engine, private readonly config: () => Config, private readonly skillFile?: SkillFile) {
     super(ctx, SERVICE)
   }
 
@@ -99,6 +100,48 @@ export class MultisearchService extends TypertRemoteService {
       throw new RemoteError('multisearch/credential-save-failed' as any, `保存失败：${errorText(error)}`, {})
     }
     return { configured: (await this.describe(ref)).configured }
+  }
+
+  private skill(): SkillFile {
+    if (!this.skillFile) throw new RemoteError('multisearch/skill-unavailable' as any, '技能文件不可用。', {})
+    return this.skillFile
+  }
+
+  @Remote
+  async skillStatus(request: unknown, signal: AbortSignal): Promise<SkillStatus> {
+    void request
+    signal.throwIfAborted()
+    const config = this.config()
+    return this.skill().status(config, config.research.skillMode ?? 'file')
+  }
+
+  @Remote
+  async saveSkill(request: unknown, signal: AbortSignal): Promise<SkillStatus> {
+    signal.throwIfAborted()
+    const parsed = skillSaveSchema.safeParse(request)
+    if (!parsed.success) throw new RemoteError('gateway/bad-request', '技能内容无效。', {})
+    const config = this.config()
+    if ((config.research.skillMode ?? 'file') !== 'file') throw new RemoteError('gateway/bad-request', '当前为内置模式，切换到文件模式后才能编辑技能文件。', {})
+    try {
+      await this.skill().save(config, parsed.data.content)
+    } catch (error) {
+      throw new RemoteError('multisearch/skill-save-failed' as any, `保存失败：${errorText(error)}`, {})
+    }
+    return this.skill().status(config, 'file')
+  }
+
+  @Remote
+  async restoreSkill(request: unknown, signal: AbortSignal): Promise<SkillStatus> {
+    void request
+    signal.throwIfAborted()
+    const config = this.config()
+    if ((config.research.skillMode ?? 'file') !== 'file') throw new RemoteError('gateway/bad-request', '当前为内置模式，无需恢复技能文件。', {})
+    try {
+      await this.skill().restore(config)
+    } catch (error) {
+      throw new RemoteError('multisearch/skill-save-failed' as any, `恢复失败：${errorText(error)}`, {})
+    }
+    return this.skill().status(config, 'file')
   }
 
   @Remote

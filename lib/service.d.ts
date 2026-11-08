@@ -3,11 +3,13 @@ import type { Context } from '@deepseek-ai/cordis';
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import { type Config } from './config.js';
 import type { Engine } from './engine.js';
-import { type MultisearchStatus, type ProviderModels } from './remote.js';
+import { type MultisearchStatus, type ProviderModels, type SkillStatus } from './remote.js';
+import type { SkillFile } from './skillfile.js';
 export declare class MultisearchService extends TypertRemoteService {
     private readonly engine;
     private readonly config;
-    constructor(ctx: Context, engine: Engine, config: () => Config);
+    private readonly skillFile?;
+    constructor(ctx: Context, engine: Engine, config: () => Config, skillFile?: SkillFile | undefined);
     private credentials;
     private describe;
     /** Only references the configuration actually uses may be written from the page. */
@@ -20,5 +22,9 @@ export declare class MultisearchService extends TypertRemoteService {
         configured: boolean;
     }>;
     private write;
+    private skill;
+    skillStatus(request: unknown, signal: AbortSignal): Promise<SkillStatus>;
+    saveSkill(request: unknown, signal: AbortSignal): Promise<SkillStatus>;
+    restoreSkill(request: unknown, signal: AbortSignal): Promise<SkillStatus>;
     models(request: unknown, signal: AbortSignal): Promise<ProviderModels>;
 }

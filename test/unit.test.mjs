@@ -158,3 +158,45 @@ test('DuckDuckGo HTML parsing unwraps redirect links and skips ads', async () =>
   <div class="result"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fbun.sh%2Fdocs&rut=x">Bun docs</a><a class="result__snippet">Bun is a fast runtime</a></div>`
   assert.deepEqual(parseDuckDuckGo(html), [{ url: 'https://bun.sh/docs', title: 'Bun docs', snippet: 'Bun is a fast runtime' }])
 })
+
+test('skill file: seeded once, follows settings while untouched, keeps edits, respects deletion, restores', async () => {
+  const { mkdtemp, readFile, rm, writeFile } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { SkillFile, generatedSkillFile, validateSkillFile } = await import('../lib/skillfile.js')
+  const home = await mkdtemp(join(tmpdir(), 'dms-skill-'))
+  const file = new SkillFile(home)
+  const a = parsed({ research: { maxSubagents: 2 } }), b = parsed({ research: { maxSubagents: 6, modelInvocable: false } })
+  assert.equal(await file.sync(a, 'file'), 'synced')
+  assert.equal(await readFile(file.path, 'utf8'), generatedSkillFile(a))
+  assert.equal(await file.sync(b, 'file'), 'synced')
+  const followed = await readFile(file.path, 'utf8')
+  assert.match(followed, /at most \*\*6\*\* running/)
+  assert.match(followed, /disable-model-invocation: true/)
+  // An edit made elsewhere (a skill manager, an editor) is kept.
+  await writeFile(file.path, followed.replace('# Deep research', '# My research'))
+  assert.equal(await file.sync(a, 'file'), 'modified')
+  assert.match(await readFile(file.path, 'utf8'), /# My research/)
+  assert.equal((await file.status(a, 'file')).state, 'modified')
+  // Saving from the settings page validates first.
+  await assert.rejects(file.save(a, 'no frontmatter'), /frontmatter/)
+  assert.equal(await file.save(a, generatedSkillFile(a)), 'synced')
+  // Deleted (trashed) stays deleted until restored.
+  await rm(file.path)
+  assert.equal(await file.sync(b, 'file'), 'deleted')
+  assert.equal(await file.restore(b), 'synced')
+  assert.equal(await readFile(file.path, 'utf8'), generatedSkillFile(b))
+  // Builtin mode takes back an untouched file, and file mode seeds it again afterwards.
+  assert.equal(await file.sync(b, 'builtin'), 'builtin')
+  await assert.rejects(readFile(file.path, 'utf8'))
+  assert.equal(await file.sync(b, 'file'), 'synced')
+  // A same-named skill the plugin never wrote is left alone.
+  const other = new SkillFile(await mkdtemp(join(tmpdir(), 'dms-skill-')))
+  const { mkdir } = await import('node:fs/promises')
+  await mkdir(join(other.path, '..'), { recursive: true })
+  await writeFile(other.path, '---\nname: deep-research\ndescription: someone else\n---\n\nbody\n')
+  assert.equal(await other.sync(a, 'file'), 'foreign')
+  assert.match(await readFile(other.path, 'utf8'), /someone else/)
+  assert.equal(validateSkillFile('---\nname: Bad Name\ndescription: x\n---\nbody'), 'name "Bad Name" 必须是小写字母、数字和连字符')
+  assert.equal(validateSkillFile('---\nname: ok\ndescription: x\nmodelInvocable: true\n---\nbody'), '不支持 modelInvocable，请用 disable-model-invocation / user-invocable')
+})

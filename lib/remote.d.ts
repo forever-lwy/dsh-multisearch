@@ -57,6 +57,27 @@ export declare const modelsSchema: z.ZodObject<{
     }, z.core.$strip>>;
 }, z.core.$strip>;
 export type ProviderModels = z.infer<typeof modelsSchema>;
+export declare const skillStatusSchema: z.ZodObject<{
+    mode: z.ZodEnum<{
+        builtin: "builtin";
+        file: "file";
+    }>;
+    path: z.ZodString;
+    state: z.ZodEnum<{
+        builtin: "builtin";
+        synced: "synced";
+        modified: "modified";
+        deleted: "deleted";
+        foreign: "foreign";
+    }>;
+    content: z.ZodOptional<z.ZodString>;
+    generated: z.ZodString;
+    error: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export type SkillStatus = z.infer<typeof skillStatusSchema>;
+export declare const skillSaveSchema: z.ZodObject<{
+    content: z.ZodString;
+}, z.core.$strict>;
 export declare const remoteInfo: import("@deepseek-ai/dsh-typert-protocol").TypertRemoteInfo<Readonly<Record<string, import("@deepseek-ai/dsh-typert-protocol").TypertRemoteMethod<object, unknown, "unary", never, unknown> | import("@deepseek-ai/dsh-typert-protocol").TypertRemoteMethod<object, unknown, "stream", unknown, unknown>>>>;
 /** Browser-side calls bound to one mounted remote. */
 export interface MultisearchRemote {
@@ -68,5 +89,8 @@ export interface MultisearchRemote {
         configured: boolean;
     }>;
     models(signal?: AbortSignal): Promise<ProviderModels>;
+    skillStatus(signal?: AbortSignal): Promise<SkillStatus>;
+    saveSkill(content: string, signal?: AbortSignal): Promise<SkillStatus>;
+    restoreSkill(signal?: AbortSignal): Promise<SkillStatus>;
 }
 export declare function bindRemote(remote: unknown): MultisearchRemote;

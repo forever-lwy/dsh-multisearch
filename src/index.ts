@@ -14,6 +14,7 @@ import { DecisionModel } from './decision.js'
 import { PageCache, StoreRegistry } from './store.js'
 import { registerTools } from './tools.js'
 import { registerSkill } from './skill.js'
+import { SkillFile } from './skillfile.js'
 
 export const name = 'dsh-multisearch'
 export const inject = ['tools', 'systemPrompt']
@@ -56,22 +57,41 @@ export function apply(ctx: Context, input: unknown): void {
   const stores = new StoreRegistry()
   // Tool names, descriptions and the skill text embed settings; rebuild them when settings change.
   let disposeTools = registerTools(ctx, engine, stores, config)
+  // The skill normally lives as a SKILL.md the host's filesystem loader serves (and skill
+  // managers can manage); builtin mode, or a failed write, registers it in memory instead.
+  const skillFile = new SkillFile()
   let skillCtx: any
   let disposeSkill = () => {}
+  let skillFallback = false
+  let skillVersion = 0
+  const applySkill = async () => {
+    const version = ++skillVersion
+    const mode = config.research.skillMode ?? 'file'
+    try {
+      await skillFile.sync(config, mode)
+      skillFallback = false
+    } catch (error) {
+      skillFallback = mode === 'file'
+      ;(ctx as any).logger?.warn?.(`multisearch: cannot write ${skillFile.path}, registering the skill in memory instead: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    if (version !== skillVersion) return
+    disposeSkill(); disposeSkill = () => {}
+    if (skillCtx && (mode === 'builtin' || skillFallback)) disposeSkill = registerSkill(skillCtx, config)
+  }
   ctx.inject(['skills'] as any, scoped => {
     skillCtx = scoped
-    disposeSkill = registerSkill(scoped, config)
+    void applySkill()
     scoped.effect(() => () => { disposeSkill(); disposeSkill = () => {}; skillCtx = undefined }, 'multisearch: skill')
   })
   ctx.on('loader/volatile-update' as any, () => {
     config = snapshotConfig(input)
     disposeTools()
     disposeTools = registerTools(ctx, engine, stores, config)
-    if (skillCtx) { disposeSkill(); disposeSkill = registerSkill(skillCtx, config) }
+    void applySkill()
   })
   ctx.effect(() => () => disposeTools(), 'multisearch: tools')
   ctx.inject(['typert'] as any, scoped => {
     ;(scoped as any).typert.remotes.register(remoteInfo)
-    new MultisearchService(scoped, engine, () => config)
+    new MultisearchService(scoped, engine, () => config, skillFile)
   })
 }

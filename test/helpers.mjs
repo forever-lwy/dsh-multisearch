@@ -1,9 +1,15 @@
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
 import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import * as Plugin from '../lib/index.js'
 import { ALL_SPECS } from '../lib/config.js'
+
+// The skill file goes to $DSH_HOME/skills; never let tests touch the real home.
+export const dshHome = process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'dms-home-'))
 
 /**
  * Replace global fetch with a router: `routes` is a list of [predicate(url, init), handler(url, init, body)].

@@ -1,6 +1,6 @@
 /** Settings → 多源搜索 (also the bundle's page on the Plugins page). Edits stay local until Save. */
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
-import type { MultisearchRemote, MultisearchStatus, ProviderModels } from '../remote.js'
+import type { MultisearchRemote, MultisearchStatus, ProviderModels, SkillStatus } from '../remote.js'
 import { deepEqual, diffOps, getIn, setIn, splitList } from './draft.js'
 
 export interface FormLike {
@@ -93,6 +93,12 @@ export function MultisearchSettings(props: SettingsProps) {
   const loadModels = useMemo(() => remote && tab === 'ranking' ? (signal: AbortSignal) => remote.models(signal) : undefined, [remote, tab])
   const [status, reloadStatus] = useLoad<MultisearchStatus>(loadStatus)
   const [models] = useLoad<ProviderModels>(loadModels)
+  const loadSkill = useMemo(() => remote && tab === 'research' ? (signal: AbortSignal) => remote.skillStatus(signal) : undefined, [remote, tab])
+  const [skill, reloadSkill] = useLoad<SkillStatus>(loadSkill)
+  const [skillText, setSkillText] = useState<string | undefined>(undefined)
+  const [skillMessage, setSkillMessage] = useState('')
+  // A settings save can rewrite a file the plugin still owns; read it again (the plugin syncs asynchronously).
+  useEffect(() => { const timer = setTimeout(reloadSkill, 400); return () => clearTimeout(timer) }, [accepted, reloadSkill])
 
   // Follow Host changes (another window, a reset) until the user starts editing.
   useEffect(() => { if (!dirty) { setDraft(accepted); setTexts({}); setErrors({}) } }, [accepted, dirty])
@@ -425,10 +431,63 @@ export function MultisearchSettings(props: SettingsProps) {
     </>
   )
 
+  const skillAction = async (action: 'save' | 'restore') => {
+    const client = props.remote()
+    if (!client) return
+    setSkillMessage(action === 'save' ? '正在保存…' : '正在恢复…')
+    try {
+      await (action === 'save' ? client.saveSkill(skillText ?? '') : client.restoreSkill())
+      setSkillText(undefined)
+      setSkillMessage(action === 'save' ? '已保存，立即生效' : '已恢复为插件生成的内容')
+      reloadSkill()
+    } catch (error) {
+      setSkillMessage(`失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  const SKILL_STATES: Record<SkillStatus['state'], [string, 'ok' | 'off' | 'bad']> = {
+    synced: ['与设置同步：修改上面的预算后会自动更新', 'ok'],
+    modified: ['已手动修改：插件不再覆盖，预算改动不会写入', 'off'],
+    deleted: ['文件已删除（可在技能管理的回收站恢复，或点“恢复默认内容”）', 'bad'],
+    foreign: ['该位置已有一个不是本插件写入的同名技能，插件没有覆盖它', 'bad'],
+    builtin: ['内置模式：技能由插件在内存中注册，技能管理插件看不到', 'off'],
+  }
+  const skillFile = skill.status === 'ready' ? skill.value : undefined
+  const skillEditor = (
+    <fieldset>
+      <legend>技能文件</legend>
+      <Field label="提供方式" hint="文件模式下技能是一个普通的 SKILL.md，DSH 的本地技能加载器会加载它，技能管理插件可以列出、停用或移入回收站。">
+        {select(['research', 'skillMode'], [['file', '文件（推荐）'], ['builtin', '插件内置']])}
+      </Field>
+      {skill.status === 'loading' ? <p className="dms-hint">正在读取技能文件…</p> : null}
+      {skill.status === 'failed' ? <p className="dms-err">技能文件读取失败：{skill.error} <button type="button" onClick={reloadSkill}>重试</button></p> : null}
+      {skillFile ? (
+        <>
+          <p><Badge state={SKILL_STATES[skillFile.state][1]}>{SKILL_STATES[skillFile.state][0]}</Badge> <code className="dms-hint">{skillFile.path}</code></p>
+          {skillFile.error ? <p className="dms-err">{skillFile.error}</p> : null}
+          {skillFile.mode === 'file' && skillFile.state !== 'foreign' ? (
+            <>
+              <Field label="SKILL.md（含 frontmatter）" hint="name 须为小写字母、数字和连字符；description 必填。保存后直接写入文件，不需要点页面底部的保存。">
+                <textarea data-skill-editor rows={22} spellCheck={false} value={skillText ?? skillFile.content ?? skillFile.generated}
+                  onChange={event => setSkillText(event.target.value)} />
+              </Field>
+              <div className="dms-key">
+                <button type="button" data-skill-action="save" disabled={skillText === undefined || skillText === (skillFile.content ?? '')} onClick={() => skillAction('save')}>保存技能文件</button>
+                <button type="button" data-skill-action="restore" onClick={() => { if (skillFile.state === 'synced' || confirm('用插件生成的内容覆盖当前技能文件？')) void skillAction('restore') }}>恢复默认内容</button>
+                {skillText !== undefined ? <button type="button" onClick={() => setSkillText(undefined)}>放弃修改</button> : null}
+                {skillMessage ? <small className={skillMessage.startsWith('失败') ? 'dms-err' : 'dms-ok'} role="status">{skillMessage}</small> : null}
+              </div>
+            </>
+          ) : null}
+        </>
+      ) : null}
+    </fieldset>
+  )
+
   const research = (
+    <>
     <fieldset>
       <legend>深度研究</legend>
-      <p className="dms-hint">这些上限会写进 deep-research 技能，调用模型据此分工和控制预算。</p>
+      <p className="dms-hint">这些上限会写进 deep-research 技能，调用模型据此分工和控制预算。技能文件被手动修改后，这里的改动不再写入文件。</p>
       <div className="dms-grid">
         <Field label="子智能体最大数量">{num(['research', 'maxSubagents'])}</Field>
         <Field label="研究轮数上限">{num(['research', 'maxRounds'])}</Field>
@@ -439,6 +498,8 @@ export function MultisearchSettings(props: SettingsProps) {
       {toggle(['research', 'modelInvocable'], '允许模型在用户明确要求深度研究时自行加载技能')}
       <button type="button" disabled={disabled} onClick={() => resetSection('research', '深度研究')}>恢复默认</button>
     </fieldset>
+    {skillEditor}
+    </>
   )
 
   const pages: Record<Tab, ReactNode> = { overview, general, sources: sourceCards, routing, ranking, research }
