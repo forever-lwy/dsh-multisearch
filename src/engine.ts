@@ -8,10 +8,15 @@ import { type RoutableSource, type RoutePlan, planRoute } from './router.js'
 import { type RankedList, diversify, fuse, mergeHits, rerank } from './aggregate.js'
 import type { DecisionModel, FollowUpAdvice } from './decision.js'
 import type { PageCache, PageRecord, RefEntry, TaskStore } from './store.js'
-import { hostOf, jaccard, matchesSite, normalizeDate, tokens, urlKey } from './text.js'
+import { estimateTokens, hostOf, jaccard, matchesSite, normalizeDate, tokens, urlKey } from './text.js'
 import { keywordExcerpt, rangeExcerpt } from './excerpt.js'
 import { markdownLinks } from './html.js'
 import { rerankTarget } from './presets.js'
+
+/** Per-page header lines in the fetch output (title, URL, status, range), ≈ tokens. */
+const FETCH_ITEM_OVERHEAD = 80
+/** A cut page still shows at least this much. */
+const FETCH_MIN_CHARS = 1200
 
 export interface EngineDeps {
   config: () => Config
@@ -93,10 +98,14 @@ export interface FetchItem {
   truncated: boolean
   publishedAt?: string
   error?: string
+  /** Cut shorter than the per-page limit to fit the call's total budget. */
+  budgeted?: boolean
 }
 
 export interface FetchOutcome {
   items: FetchItem[]
+  /** Set when pages were cut to fit this total (≈ tokens). */
+  budgetTokens?: number
   map?: { url: string; title?: string; ref?: string }[]
   elapsedMs: number
   stop: StopReason
@@ -398,8 +407,9 @@ export class Engine {
     }
     const perPage = input.crawl ? Math.max(1500, Math.floor(maxChars * 2 / Math.max(1, targets.length))) : maxChars
     const items = await pool(targets, tuning.fetchConcurrency, target => this.fetchOne(target, input, perPage, tuning, sources, store, deadline, started))
+    const budgeted = this.applyBudget(items, input, store, tuning.fetchTotalTokens)
     const stop: StopReason = signal.aborted ? 'cancelled' : deadline.aborted ? 'timeout' : items.some(i => i.status !== 'ok') ? 'partial' : 'completed'
-    return { items, ...(map ? { map } : {}), elapsedMs: Date.now() - started, stop }
+    return { items, ...(map ? { map } : {}), ...(budgeted ? { budgetTokens: tuning.fetchTotalTokens } : {}), elapsedMs: Date.now() - started, stop }
   }
 
   private fetchOrder(url: string, input: FetchInput, sources: RoutableSource[], tuning: Tuning): string[] {
@@ -486,17 +496,55 @@ export class Engine {
     entry.status = page.status === 'ok' ? 'fetched' : 'partial'
     if (page.title && (entry.title === url || !entry.title)) entry.title = page.title
     const base = { ref: entry.ref, url, finalUrl: page.finalUrl, title: page.title, service: page.service, fromCache, attempts, totalChars: page.content.length, publishedAt: page.publishedAt }
+    return { ...base, ...this.pageView(page, input, maxChars) }
+  }
+
+  /** The part of a page returned to the model: matching sections for keywords, else a range from `offset`. */
+  private pageView(page: PageRecord, input: FetchInput, maxChars: number): Pick<FetchItem, 'status' | 'content' | 'view' | 'range' | 'nextOffset' | 'matches' | 'truncated'> {
     if (input.keywords.length) {
       const excerpt = keywordExcerpt(page.content, input.keywords, input.contextChars, maxChars)
-      if (excerpt.matches > 0) return { ...base, status: page.status, content: excerpt.text, view: 'keywords', matches: excerpt.matches, truncated: excerpt.truncated || page.truncated, ...(excerpt.ranges.length ? { range: [excerpt.ranges[0]![0], excerpt.ranges[excerpt.ranges.length - 1]![1]] as [number, number] } : {}) }
+      if (excerpt.matches > 0) return { status: page.status, content: excerpt.text, view: 'keywords', matches: excerpt.matches, truncated: excerpt.truncated || page.truncated, ...(excerpt.ranges.length ? { range: [excerpt.ranges[0]![0], excerpt.ranges[excerpt.ranges.length - 1]![1]] as [number, number] } : {}) }
     }
     const range = rangeExcerpt(page.content, input.offset, maxChars)
     return {
-      ...base, status: page.status, content: range.text, view: 'range', range: [range.start, range.end],
+      status: page.status, content: range.text, view: 'range', range: [range.start, range.end],
       ...(range.nextOffset !== undefined ? { nextOffset: range.nextOffset } : {}),
       ...(input.keywords.length ? { matches: 0 } : {}),
       truncated: range.nextOffset !== undefined || page.truncated,
     }
+  }
+
+  /**
+   * Fit one call's returned text into `budget` (≈ tokens) so the host does not spill it to a file.
+   * Water-filling: pages are served smallest first and kept whole while they fit an equal share of
+   * what is left; the rest split the remainder evenly and are cut at a block boundary, keeping the
+   * offset to continue. Full text stays in the task store, so continuing does not refetch.
+   */
+  private applyBudget(items: FetchItem[], input: FetchInput, store: TaskStore, budget: number): boolean {
+    if (budget <= 0) return false
+    const sized = items.map((item, index) => ({ index, item, cost: estimateTokens(item.content) })).filter(x => x.item.content !== '')
+    if (sized.reduce((sum, x) => sum + x.cost, 0) + FETCH_ITEM_OVERHEAD * items.length <= budget) return false
+    let remaining = Math.max(0, budget - FETCH_ITEM_OVERHEAD * items.length)
+    const order = [...sized].sort((a, b) => a.cost - b.cost)
+    const share = new Map<number, number>()
+    for (const [k, x] of order.entries()) {
+      const even = remaining / (order.length - k)
+      if (x.cost <= even) { remaining -= x.cost; continue }
+      for (const rest of order.slice(k)) share.set(rest.index, even)
+      break
+    }
+    let cut = false
+    for (const [index, tokens] of share) {
+      const item = items[index]!
+      const page = item.ref ? store.get(item.ref)?.page : undefined
+      if (!page) continue
+      const charsPerToken = item.content.length / Math.max(1, estimateTokens(item.content))
+      const chars = Math.max(FETCH_MIN_CHARS, Math.floor(tokens * charsPerToken))
+      if (chars >= item.content.length) continue
+      items[index] = { ...item, ...this.pageView(page, input, chars), budgeted: true }
+      cut = true
+    }
+    return cut
   }
 
   /** Site discovery: a map service when available, else a bounded breadth-first walk over fetched pages. */

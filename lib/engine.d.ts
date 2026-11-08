@@ -120,9 +120,13 @@ export interface FetchItem {
     truncated: boolean;
     publishedAt?: string;
     error?: string;
+    /** Cut shorter than the per-page limit to fit the call's total budget. */
+    budgeted?: boolean;
 }
 export interface FetchOutcome {
     items: FetchItem[];
+    /** Set when pages were cut to fit this total (≈ tokens). */
+    budgetTokens?: number;
     map?: {
         url: string;
         title?: string;
@@ -154,6 +158,15 @@ export declare class Engine {
     private fetchOrder;
     private assess;
     private fetchOne;
+    /** The part of a page returned to the model: matching sections for keywords, else a range from `offset`. */
+    private pageView;
+    /**
+     * Fit one call's returned text into `budget` (≈ tokens) so the host does not spill it to a file.
+     * Water-filling: pages are served smallest first and kept whole while they fit an equal share of
+     * what is left; the rest split the remainder evenly and are cut at a block boundary, keeping the
+     * offset to continue. Full text stays in the task store, so continuing does not refetch.
+     */
+    private applyBudget;
     /** Site discovery: a map service when available, else a bounded breadth-first walk over fetched pages. */
     private discover;
 }

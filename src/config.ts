@@ -18,6 +18,8 @@ export interface Tuning {
   callTimeoutMs: number
   fetchConcurrency: number
   fetchMaxChars: number
+  /** Combined size of one fetch call's returned text (≈ tokens; 0 = no cap). Keeps multi-URL reads under the host's inline limit. */
+  fetchTotalTokens: number
   fetchRetries: number
   fetchFallbacks: number
   cacheTtlMinutes: number
@@ -31,17 +33,17 @@ export interface Tuning {
 export const PRESETS: Record<ProfileName, Tuning> = {
   fast: {
     parallelSources: 1, queryConcurrency: 4, perSourceResults: 6, autoFollowUp: false, followUpRounds: 0, minResults: 3, duplicateRatio: 0.7,
-    requestTimeoutMs: 8000, callTimeoutMs: 15000, fetchConcurrency: 4, fetchMaxChars: 8000, fetchRetries: 0, fetchFallbacks: 2,
+    requestTimeoutMs: 8000, callTimeoutMs: 15000, fetchConcurrency: 4, fetchMaxChars: 8000, fetchTotalTokens: 6000, fetchRetries: 0, fetchFallbacks: 2,
     cacheTtlMinutes: 60, candidateLimit: 20, returnResults: 6, outputTokens: 2000, snippetChars: 280, rerank: true,
   },
   balanced: {
     parallelSources: 2, queryConcurrency: 6, perSourceResults: 8, autoFollowUp: false, followUpRounds: 1, minResults: 5, duplicateRatio: 0.6,
-    requestTimeoutMs: 12000, callTimeoutMs: 30000, fetchConcurrency: 4, fetchMaxChars: 15000, fetchRetries: 1, fetchFallbacks: 3,
+    requestTimeoutMs: 12000, callTimeoutMs: 30000, fetchConcurrency: 4, fetchMaxChars: 15000, fetchTotalTokens: 8000, fetchRetries: 1, fetchFallbacks: 3,
     cacheTtlMinutes: 60, candidateLimit: 40, returnResults: 8, outputTokens: 4000, snippetChars: 450, rerank: true,
   },
   deep: {
     parallelSources: 4, queryConcurrency: 8, perSourceResults: 10, autoFollowUp: true, followUpRounds: 2, minResults: 8, duplicateRatio: 0.5,
-    requestTimeoutMs: 20000, callTimeoutMs: 60000, fetchConcurrency: 6, fetchMaxChars: 30000, fetchRetries: 1, fetchFallbacks: 4,
+    requestTimeoutMs: 20000, callTimeoutMs: 60000, fetchConcurrency: 6, fetchMaxChars: 30000, fetchTotalTokens: 10000, fetchRetries: 1, fetchFallbacks: 4,
     cacheTtlMinutes: 120, candidateLimit: 80, returnResults: 12, outputTokens: 8000, snippetChars: 600, rerank: true,
   },
 }
@@ -123,6 +125,7 @@ const tuningSchema = z.object({
   callTimeoutMs: nat('单次工具调用总时限（毫秒）'),
   fetchConcurrency: nat('抓取并发数'),
   fetchMaxChars: nat('每个页面单次返回的最大字符数'),
+  fetchTotalTokens: nat('一次抓取返回内容的总预算（约 tokens，多个页面共享；0 不限制）。默认低于 DSH 工具结果内联上限 12500，避免被转存到文件'),
   fetchRetries: nat('同一服务的重试次数'),
   fetchFallbacks: nat('同一 URL 最多尝试的抓取服务数'),
   cacheTtlMinutes: nat('已抓取正文的缓存时效（分钟）'),
@@ -266,6 +269,7 @@ export function effectiveTuning(config: Config, profile: ProfileName | undefined
     callTimeoutMs: clamp(merged.callTimeoutMs, l.maxCallTimeoutMs, 2000),
     fetchConcurrency: clamp(merged.fetchConcurrency, 16, 1),
     fetchMaxChars: clamp(merged.fetchMaxChars, l.maxFetchChars, 500),
+    fetchTotalTokens: clamp(merged.fetchTotalTokens ?? 0, 200_000),
     fetchRetries: clamp(merged.fetchRetries, 3),
     fetchFallbacks: clamp(merged.fetchFallbacks, 12, 1),
     candidateLimit: clamp(merged.candidateLimit, 200, 1),

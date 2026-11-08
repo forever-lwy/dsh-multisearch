@@ -15,6 +15,8 @@ export interface Tuning {
     callTimeoutMs: number;
     fetchConcurrency: number;
     fetchMaxChars: number;
+    /** Combined size of one fetch call's returned text (≈ tokens; 0 = no cap). Keeps multi-URL reads under the host's inline limit. */
+    fetchTotalTokens: number;
     fetchRetries: number;
     fetchFallbacks: number;
     cacheTtlMinutes: number;

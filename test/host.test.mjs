@@ -546,3 +546,41 @@ test('decision API backend: OpenAI Decisions reranks end to end; System One rout
   assert.equal(probe.ok, false)
   assert.match(probe.detail, /P\(true\)=0\.10/)
 })
+
+test('fetch shares one size budget across pages: short pages whole, long pages cut with an offset, continued from cache', async t => {
+  // Sizes from a real deep-profile call that the host spilled to a file: two long live blogs and four short pages.
+  const para = (word, n) => Array.from({ length: n }, (_, i) => `${word} paragraph ${i}. ${'Lorem ipsum dolor sit amet consectetur. '.repeat(6)}`).join('\n\n')
+  const pages = {
+    'https://a.example/long1': `# Live one\n\n${para('alpha', 220)}`,
+    'https://a.example/long2': `# Live two\n\n${para('beta', 210)}`,
+    'https://a.example/short1': `# Short one\n\n${para('gamma', 15)}`,
+    'https://a.example/short2': `# Short two\n\n${para('delta', 15)}`,
+    'https://a.example/cn1': `# 中文一\n\n${'美国中期选举结果分析与各州情况说明。'.repeat(80)}`,
+    'https://a.example/cn2': `# 中文二\n\n${'民意变化与政策走向的综合评述内容。'.repeat(80)}`,
+  }
+  const calls = mockFetch(t, [
+    ['https://api.keenable.ai/v1/fetch/public', (url, init, body) => ({ json: { url: body?.url ?? '', content: pages[body?.url ?? new URL(url).searchParams.get('url')], title: 'T' } })],
+  ])
+  const { call } = await boot(t, { sources: only(['keenable']), profile: 'deep' })
+  const urls = Object.keys(pages)
+  const out = await call('fetch', { urls })
+  assert.equal(out.isError, false, out.text)
+  const { estimateTokens } = await import('../lib/text.js')
+  assert.ok(estimateTokens(out.text) <= 10_500, `output ≈ ${estimateTokens(out.text)} tokens`)
+  assert.match(out.text, /共用约 10000 tokens 的返回预算/)
+  const ranges = [...out.text.matchAll(/字符 (\d+)–(\d+) \/ 共 (\d+)/g)].map(m => [Number(m[2]), Number(m[3])])
+  assert.equal(ranges.length, 6)
+  const whole = ranges.filter(([end, total]) => end === total).length
+  assert.equal(whole, 4, out.text.slice(0, 2000))
+  const cont = [...out.text.matchAll(/继续读取：fetch\(\{urls:\["(S\d+)"\], offset:(\d+)\}\)/g)]
+  assert.equal(cont.length, 2)
+  // Continuing one page reads the cache and returns the next stretch.
+  const before = calls.length
+  const next = await call('fetch', { urls: [cont[0][1]], offset: Number(cont[0][2]) })
+  assert.equal(calls.length, before, 'served from cache')
+  assert.match(next.text, new RegExp(`字符 ${cont[0][2]}–`))
+  // Under budget nothing is cut and no budget line is shown.
+  const single = await call('fetch', { urls: [urls[2]] })
+  assert.doesNotMatch(single.text, /返回预算/)
+  assert.match(out.text, /S1、S2 已截短/)
+})
