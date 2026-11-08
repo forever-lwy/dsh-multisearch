@@ -45,6 +45,17 @@ export const modelsSchema = z.object({
 })
 export type ProviderModels = z.infer<typeof modelsSchema>
 
+export const skillStatusSchema = z.object({
+  mode: z.enum(['file', 'builtin']),
+  path: z.string(),
+  state: z.enum(['synced', 'modified', 'deleted', 'foreign', 'builtin']),
+  content: z.string().optional(),
+  generated: z.string(),
+  error: z.string().optional(),
+})
+export type SkillStatus = z.infer<typeof skillStatusSchema>
+export const skillSaveSchema = z.object({ content: z.string().min(1).max(200_000) }).strict()
+
 const codec = (schema: z.ZodType, typeSymbol: string) => ({ mode: 'strict' as const, typeSymbol, create: () => schema })
 const method = (input: z.ZodType, output: z.ZodType) => ({
   service: SERVICE, invocation: { kind: 'direct' as const },
@@ -57,6 +68,9 @@ export const remoteInfo = createTypertRemoteInfo({ package: '@forever-lwy/dsh-mu
   'multisearch/setCredential': method(credentialRequestSchema, credentialResultSchema),
   'multisearch/clearCredential': method(credentialRequestSchema, credentialResultSchema),
   'multisearch/models': method(empty, modelsSchema),
+  'multisearch/skillStatus': method(empty, skillStatusSchema),
+  'multisearch/saveSkill': method(skillSaveSchema, skillStatusSchema),
+  'multisearch/restoreSkill': method(empty, skillStatusSchema),
 } }, z)
 
 async function invoke<T>(remote: unknown, key: string, request: unknown, signal?: AbortSignal): Promise<T> {
@@ -71,6 +85,9 @@ export interface MultisearchRemote {
   setCredential(ref: string, value: string, signal?: AbortSignal): Promise<{ configured: boolean }>
   clearCredential(ref: string, signal?: AbortSignal): Promise<{ configured: boolean }>
   models(signal?: AbortSignal): Promise<ProviderModels>
+  skillStatus(signal?: AbortSignal): Promise<SkillStatus>
+  saveSkill(content: string, signal?: AbortSignal): Promise<SkillStatus>
+  restoreSkill(signal?: AbortSignal): Promise<SkillStatus>
 }
 
 export function bindRemote(remote: unknown): MultisearchRemote {
@@ -79,5 +96,8 @@ export function bindRemote(remote: unknown): MultisearchRemote {
     setCredential: (ref, value, signal) => invoke(remote, 'multisearch/setCredential', { ref, value }, signal),
     clearCredential: (ref, signal) => invoke(remote, 'multisearch/clearCredential', { ref }, signal),
     models: signal => invoke(remote, 'multisearch/models', {}, signal),
+    skillStatus: signal => invoke(remote, 'multisearch/skillStatus', {}, signal),
+    saveSkill: (content, signal) => invoke(remote, 'multisearch/saveSkill', { content }, signal),
+    restoreSkill: signal => invoke(remote, 'multisearch/restoreSkill', {}, signal),
   }
 }

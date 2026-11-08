@@ -1,6 +1,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { boot, mockFetch, only } from './helpers.mjs'
+import { boot, dshHome, mockFetch, only } from './helpers.mjs'
+
+async function waitFor(check, ms = 2000) {
+  const end = Date.now() + ms
+  for (;;) {
+    if (await check()) return
+    if (Date.now() > end) throw new Error('condition not reached')
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+}
 
 const exaHits = urls => ({ results: urls.map((url, i) => ({ url, title: `Exa ${i}`, highlights: [`exa highlight about react hooks ${i}`], publishedDate: '2025-05-01' })) })
 const tavilyHits = urls => ({ results: urls.map((url, i) => ({ url, title: `Tavily ${i}`, content: `tavily content about react hooks ${i}` })) })
@@ -157,14 +166,25 @@ test('Tencent WSA request is TC3-signed and parses Pages', async t => {
   assert.match(out.text, /https:\/\/gov\.cn\/a/)
 })
 
-test('deep-research skill registers with the configured budget', async t => {
+test('deep-research skill is a SKILL.md in $DSH_HOME/skills by default; builtin mode registers it in memory', async t => {
+  const { readFile, rm } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const file = join(dshHome, 'skills', 'deep-research', 'SKILL.md')
+  await rm(join(dshHome, 'skills'), { recursive: true, force: true }); await rm(join(dshHome, 'storages'), { recursive: true, force: true })
   const registered = []
   const { ctx } = await boot(t, { research: { maxSubagents: 4 } })
   ctx.provide('skills', { register: skill => { registered.push(skill); return () => {} } })
-  await new Promise(resolve => setTimeout(resolve, 20))
-  assert.equal(registered.length, 1)
-  assert.equal(registered[0].name, 'deep-research')
-  assert.match(registered[0].content, /at most \*\*4\*\* running research directions/)
+  await waitFor(async () => (await readFile(file, 'utf8').catch(() => '')).includes('at most **4** running'))
+  const text = await readFile(file, 'utf8')
+  assert.match(text, /^---\nname: deep-research\ndescription: "/)
+  assert.match(text, /disable-model-invocation: false/)
+  assert.equal(registered.length, 0, 'file mode does not also register in memory')
+  const builtin = []
+  const second = await boot(t, { research: { maxSubagents: 2, skillMode: 'builtin' } })
+  second.ctx.provide('skills', { register: skill => { builtin.push(skill); return () => {} } })
+  await waitFor(() => builtin.length === 1)
+  assert.match(builtin[0].content, /at most \*\*2\*\* running/)
+  await waitFor(async () => (await readFile(file, 'utf8').catch(() => 'gone')) === 'gone')
 })
 
 test('capability gates: Jina search needs a key while reading does not; self-hosted Crawl4AI cannot search', async t => {
@@ -279,11 +299,12 @@ test('a volatile settings update rebuilds tool names and the skill text without 
   new ToolRuntime(ctx)
   const skills = []
   ctx.provide('skills'); ctx.set('skills', { register: skill => { skills.push(skill); return () => { skills.splice(skills.indexOf(skill), 1) } } })
-  // Stand-ins for the loader's volatile references.
-  const values = Plugin.snapshotConfig(Plugin.Config({}))
+  // Stand-ins for the loader's volatile references (builtin mode keeps the skill in memory for this check).
+  const values = Plugin.snapshotConfig(Plugin.Config({ research: { skillMode: 'builtin' } }))
   const raw = Object.fromEntries(Object.keys(values).map(key => [key, { get: () => values[key] }]))
   await (await ctx.plugin({ name: 'wrap', inject: ['tools', 'systemPrompt'], apply: child => Plugin.apply(child, raw) })).await()
   assert.ok(ctx.tools.get('search'))
+  await waitFor(() => skills.length === 1)
   assert.match(skills[0].content, /at most \*\*3\*\* running/)
   values.tools = { ...values.tools, searchName: 'web_lookup' }
   values.research = { ...values.research, maxSubagents: 5 }
@@ -291,8 +312,7 @@ test('a volatile settings update rebuilds tool names and the skill text without 
   assert.equal(ctx.tools.get('search'), undefined)
   assert.ok(ctx.tools.get('web_lookup'))
   assert.ok(ctx.tools.get('fetch'))
-  assert.equal(skills.length, 1)
-  assert.match(skills[0].content, /at most \*\*5\*\* running/)
+  await waitFor(() => skills.length === 1 && /at most \*\*5\*\* running/.test(skills[0].content))
 })
 
 test('settings service reports readiness and writes only credentials the settings use', async t => {

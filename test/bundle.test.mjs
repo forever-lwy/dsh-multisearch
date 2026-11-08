@@ -36,7 +36,7 @@ test('every Remote method declares the parameter names the browser sends', async
     return source.slice(source.indexOf('(') + 1, source.indexOf(')')).split(',').map(part => part.trim()).filter(Boolean)
   }
   const methods = Object.entries(remoteInfo.methods)
-  assert.equal(methods.length, 4)
+  assert.equal(methods.length, 7)
   for (const [key, method] of methods) {
     const implementation = Plugin.MultisearchService.prototype[key.split('/')[1]]
     assert.equal(typeof implementation, 'function', key)

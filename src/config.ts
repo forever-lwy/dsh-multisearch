@@ -90,7 +90,7 @@ export interface Config {
   fetching: { order: string[]; allowPrivateNetwork: boolean; minContentChars: number; preferRender: string[] }
   rerank: { mode: 'rules' | 'service' | 'model'; url: string; apiKey: string; model: string }
   decision: { enabled: boolean; provider: string; model: string; reasoning: string; stages: ('route' | 'rerank' | 'followup')[]; timeoutMs: number; keepThreshold: number; maxCandidates: number }
-  research: { maxSubagents: number; maxRounds: number; maxPages: number; timeMinutes: number; maxCalls: number; modelInvocable: boolean }
+  research: { maxSubagents: number; maxRounds: number; maxPages: number; timeMinutes: number; maxCalls: number; modelInvocable: boolean; skillMode: 'file' | 'builtin' }
   sources: Record<string, SourceSettings>
 }
 
@@ -209,6 +209,7 @@ export const Config: z<Config> = z.object({
     timeMinutes: z.natural().default(30).description('研究总时长（分钟）'),
     maxCalls: z.natural().default(60).description('search/fetch 总调用次数上限'),
     modelInvocable: z.boolean().default(true).description('允许模型在用户明确要求深度研究时自行加载技能'),
+    skillMode: z.union(['file', 'builtin']).default('file').description('技能提供方式：file 写成 $DSH_HOME/skills/deep-research/SKILL.md（可被技能管理插件管理、可编辑）；builtin 由插件在内存中注册'),
   }).volatile().description('深度研究'),
   sources: sourcesSchema.volatile().description('搜索源与抓取服务'),
 }) as any
