@@ -1,5 +1,6 @@
 /** Orchestration: source registry, search with follow-up, fetch with fallback, crawl. */
 import type { Config, Tuning } from './config.js';
+import { sourceCount } from './config.js';
 import type { ProfileName, ResourceType, SearchNeed, SourceRun, StopReason } from './types.js';
 import { type RoutableSource, type RoutePlan } from './router.js';
 import type { DecisionModel } from './decision.js';
@@ -51,6 +52,7 @@ export interface SearchOutcome {
     };
     route: {
         mode: RoutePlan['mode'] | 'more';
+        count?: ReturnType<typeof sourceCount>;
         sources: {
             id: string;
             reasons: string[];

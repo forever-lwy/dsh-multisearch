@@ -77,6 +77,11 @@ export interface Config {
         rules: RouteRule[];
         overlapPenalty: number;
         officialDomains: string[];
+        /** Bounds on how many sources one automatic search uses (explicit `sources` are not bounded). */
+        minSources: number;
+        maxSources: number;
+        /** With decision-model routing, sources scoring at least this fit are used (within the bounds). */
+        fitThreshold: number;
     };
     fetching: {
         order: string[];
@@ -131,4 +136,15 @@ export declare const SECTIONS: readonly ["profile", "tools", "overrides", "limit
 export declare function snapshotConfig(raw: unknown): Config;
 /** Merge order: per-call > user setting > preset; then clamp to hard limits. */
 export declare function effectiveTuning(config: Config, profile: ProfileName | undefined, call: Partial<Tuning>): Tuning;
+/**
+ * How many sources an automatic search uses, within [minSources, maxSources] (and the hard limit):
+ * the per-call `parallel_sources` when given, else the decision model's count of well-fitting
+ * sources when it scored them, else the profile's parallelSources.
+ */
+export declare function sourceCount(config: Config, tuning: Tuning, call: Partial<Tuning> | undefined, semantic?: Map<string, number>): {
+    count: number;
+    min: number;
+    max: number;
+    by: 'call' | 'decision' | 'profile';
+};
 export declare function sourceSettings(config: Config, id: string): SourceSettings;

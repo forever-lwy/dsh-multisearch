@@ -249,3 +249,20 @@ test('fetch total budget: per-profile defaults, 0 turns it off, hard ceiling', a
   assert.equal(effectiveTuning(snapshotConfig(Config({ overrides: { fetchTotalTokens: 0 } })), 'deep', {}).fetchTotalTokens, 0)
   assert.equal(effectiveTuning(config, 'deep', { fetchTotalTokens: 10_000_000 }).fetchTotalTokens, 200_000)
 })
+
+test('source count: profile, decision model and call parameter, always within the configured range', async () => {
+  const { Config, effectiveTuning, snapshotConfig, sourceCount } = await import('../lib/config.js')
+  const config = snapshotConfig(Config({ routing: { minSources: 2, maxSources: 4 } }))
+  const fast = effectiveTuning(config, 'fast', {})
+  assert.deepEqual(sourceCount(config, fast, {}), { count: 2, min: 2, max: 4, by: 'profile' })
+  const deep = effectiveTuning(config, 'deep', {})
+  assert.equal(sourceCount(config, deep, {}).count, 4)
+  const scores = new Map([['exa', 0.9], ['tavily', 0.75], ['consensus', 0.62], ['hackernews', 0.3], ['context7', 0.65], ['you', 0.7]])
+  assert.deepEqual(sourceCount(config, fast, {}, scores), { count: 4, min: 2, max: 4, by: 'decision' })
+  assert.equal(sourceCount(config, fast, {}, new Map([['exa', 0.2]])).count, 2)
+  const call = effectiveTuning(config, 'fast', { parallelSources: 1 })
+  assert.deepEqual(sourceCount(config, call, { parallelSources: 1 }, scores), { count: 2, min: 2, max: 4, by: 'call' })
+  // Defaults keep the old behaviour without a decision model; the hard limit still caps the range.
+  const plain = snapshotConfig(Config({ limits: { maxParallelSources: 3 } }))
+  assert.deepEqual(sourceCount(plain, effectiveTuning(plain, 'fast', {}), {}), { count: 1, min: 1, max: 3, by: 'profile' })
+})

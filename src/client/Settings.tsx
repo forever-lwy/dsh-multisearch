@@ -353,6 +353,9 @@ export function MultisearchSettings(props: SettingsProps) {
         </Field>
         <div className="dms-grid">
           <Field label="共用底层引擎扣分">{num(['routing', 'overlapPenalty'])}</Field>
+          <Field label="自动选源：最少来源数" hint="档位或调用参数更少时按此值">{num(['routing', 'minSources'])}</Field>
+          <Field label="自动选源：最多来源数" hint="另受硬性上限“并行来源数上限”约束">{num(['routing', 'maxSources'])}</Field>
+          <Field label="决策模型选源门槛（0–1）" hint="启用决策模型选源时，适配分不低于此值的来源都会使用，数量限制在上面的范围内；未启用时按档位的并行来源数">{num(['routing', 'fitThreshold'], { step: '0.05' })}</Field>
         </div>
         <Field label="额外视为官方资料的域名（每行一个）">
           <textarea rows={3} value={listText(['routing', 'officialDomains'], '\n')} disabled={disabled} onChange={event => editList(['routing', 'officialDomains'], event.target.value)} />
