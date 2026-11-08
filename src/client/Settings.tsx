@@ -1,6 +1,7 @@
 /** Settings → 多源搜索 (also the bundle's page on the Plugins page). Edits stay local until Save. */
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { MultisearchRemote, MultisearchStatus, ProviderModels, SkillStatus } from '../remote.js'
+import { DECISION_DEFAULT_KEY, RERANK_PROVIDERS, RERANK_PROVIDER_IDS, rerankTarget, type RerankProvider } from '../presets.js'
 import { deepEqual, diffOps, getIn, setIn, splitList } from './draft.js'
 
 export interface FormLike {
@@ -97,6 +98,7 @@ export function MultisearchSettings(props: SettingsProps) {
   const [skill, reloadSkill] = useLoad<SkillStatus>(loadSkill)
   const [skillText, setSkillText] = useState<string | undefined>(undefined)
   const [skillMessage, setSkillMessage] = useState('')
+  const [probe, setProbe] = useState<{ rerank?: string; decision?: string }>({})
   // A settings save can rewrite a file the plugin still owns; read it again (the plugin syncs asynchronously).
   useEffect(() => { const timer = setTimeout(reloadSkill, 400); return () => clearTimeout(timer) }, [accepted, reloadSkill])
 
@@ -377,56 +379,109 @@ export function MultisearchSettings(props: SettingsProps) {
     </>
   )
 
-  const rerankKey = status.status === 'ready' ? status.value.extraCredentials.find(c => c.ref === getIn(accepted, ['rerank', 'apiKey'])) : undefined
+  const extraKey = (ref: string) => status.status === 'ready' ? status.value.extraCredentials.find(c => c.ref === ref) : undefined
+  const rerankProvider = ((get(['rerank', 'provider']) as string | undefined) ?? 'jina') as RerankProvider
+  const preset = RERANK_PROVIDERS[rerankProvider] ?? RERANK_PROVIDERS.custom
+  const savedRerank = rerankTarget((getIn(accepted, ['rerank']) ?? {}) as any)
+  const draftRerank = rerankTarget((get(['rerank']) ?? {}) as any)
+  const rerankKey = extraKey(savedRerank.apiKey)
+  const backend = ((get(['decision', 'backend']) as string | undefined) ?? 'dsh') as 'dsh' | 'openai'
+  const decisionRef = (get(['decision', 'apiKey']) as string | undefined) || DECISION_DEFAULT_KEY
+  const savedDecisionRef = (getIn(accepted, ['decision', 'apiKey']) as string | undefined) || DECISION_DEFAULT_KEY
+  const savedBackend = (getIn(accepted, ['decision', 'backend']) as string | undefined) ?? 'dsh'
   const providerOptions = models.status === 'ready' ? models.value.providers : []
   const provider = (get(['decision', 'provider']) as string | undefined) ?? ''
   const modelList = providerOptions.find(p => p.provider === provider)?.models ?? []
   const stages = (get(['decision', 'stages']) as string[] | undefined) ?? []
+  const runProbe = async (which: 'rerank' | 'decision') => {
+    const client = props.remote()
+    if (!client) return
+    setProbe(previous => ({ ...previous, [which]: '正在测试…' }))
+    try {
+      const result = await (which === 'rerank' ? client.testRerank() : client.testDecision())
+      setProbe(previous => ({ ...previous, [which]: `${result.ok ? '通过' : '失败'}：${result.detail}${result.ms ? `（${(result.ms / 1000).toFixed(1)} 秒）` : ''}` }))
+    } catch (error) {
+      setProbe(previous => ({ ...previous, [which]: `失败：${error instanceof Error ? error.message : String(error)}` }))
+    }
+  }
+  const probeLine = (which: 'rerank' | 'decision', label: string) => (
+    <div className="dms-key">
+      <button type="button" data-probe={which} disabled={!deepEqual(draft, accepted)} onClick={() => runProbe(which)}>{label}</button>
+      {!deepEqual(draft, accepted) ? <small className="dms-warn">先保存设置再测试</small> : null}
+      {probe[which] ? <small className={probe[which]!.startsWith('通过') ? 'dms-ok' : probe[which] === '正在测试…' ? 'dms-hint' : 'dms-err'} role="status">{probe[which]}</small> : null}
+    </div>
+  )
   const ranking = (
     <>
       <fieldset>
         <legend>结果重排</legend>
         <div className="dms-grid">
-          <Field label="重排方式">{select(['rerank', 'mode'], [['rules', '规则'], ['service', '专用重排服务（Jina/Cohere 兼容）'], ['model', '决策模型']])}</Field>
-          <Field label="重排服务地址">{text(['rerank', 'url'])}</Field>
-          <Field label="重排模型">{text(['rerank', 'model'])}</Field>
-          <Field label="凭据引用名">{text(['rerank', 'apiKey'])}</Field>
+          <Field label="重排方式">{select(['rerank', 'mode'], [['rules', '规则'], ['service', '专用重排服务'], ['model', '决策模型']])}</Field>
+          <Field label="重排服务供应商">
+            <select value={rerankProvider} disabled={disabled} onChange={event => {
+              set(['rerank', 'provider'], event.target.value)
+              // Overrides belong to the previous provider; drop the ones that were filled in.
+              for (const field of ['url', 'model', 'apiKey']) if (get(['rerank', field])) set(['rerank', field], undefined)
+            }}>
+              {RERANK_PROVIDER_IDS.map(id => <option key={id} value={id}>{RERANK_PROVIDERS[id].label}</option>)}
+            </select>
+          </Field>
+          <Field label="重排服务地址" hint={preset.url ? `留空使用 ${preset.url}` : '自定义供应商须填写，接口须兼容 Jina/Cohere rerank'}>{text(['rerank', 'url'], preset.url)}</Field>
+          <Field label="重排模型" hint={preset.model ? `留空使用 ${preset.model}` : undefined}>{text(['rerank', 'model'], preset.model)}</Field>
+          <Field label="凭据引用名" hint={preset.apiKey ? `留空使用 ${preset.apiKey}` : '服务需要 Key 时填写'}>{text(['rerank', 'apiKey'], preset.apiKey)}</Field>
         </div>
-        {keyEditor(rerankKey, get(['rerank', 'apiKey']) === getIn(accepted, ['rerank', 'apiKey']))}
+        {keyEditor(rerankKey, draftRerank.apiKey === savedRerank.apiKey)}
+        {probeLine('rerank', '测试重排服务')}
       </fieldset>
       <fieldset>
         <legend>决策模型（如 Jev）</legend>
-        <p className="dms-hint">用 DSH 已配置的任意模型做选源、相关性判断和是否补搜；关闭、超时或输出无效时回退到规则。</p>
+        <p className="dms-hint">用于选源、相关性判断和是否补搜；关闭、超时或输出无效时回退到规则。可以用 DSH 已配置的供应商，也可以单独填写一个 OpenAI 兼容接口。</p>
         {toggle(['decision', 'enabled'], '启用决策模型')}
         <div className="dms-grid">
-          <Field label="供应商" hint={models.status === 'failed' ? `模型列表读取失败：${models.error}` : models.status === 'loading' ? '正在读取模型列表…' : undefined}>
-            {providerOptions.length ? (
-              <select value={provider} disabled={disabled} onChange={event => { set(['decision', 'provider'], event.target.value); set(['decision', 'model'], '') }}>
-                <option value="">（未选择）</option>
-                {providerOptions.map(p => <option key={p.provider} value={p.provider}>{p.name}</option>)}
-                {provider && !providerOptions.some(p => p.provider === provider) ? <option value={provider}>{provider}</option> : null}
-              </select>
-            ) : text(['decision', 'provider'], '供应商 ID')}
-          </Field>
-          <Field label="模型">
-            {modelList.length ? (
-              <select value={(get(['decision', 'model']) as string) ?? ''} disabled={disabled} onChange={event => set(['decision', 'model'], event.target.value)}>
-                <option value="">（未选择）</option>
-                {modelList.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                {get(['decision', 'model']) && !modelList.some(m => m.id === get(['decision', 'model'])) ? <option value={get(['decision', 'model']) as string}>{get(['decision', 'model']) as string}</option> : null}
-              </select>
-            ) : text(['decision', 'model'], '模型 ID')}
-          </Field>
-          <Field label="思考强度 ID（可选）">{text(['decision', 'reasoning'])}</Field>
+          <Field label="供应商来源">{select(['decision', 'backend'], [['dsh', 'DSH 已配置的供应商'], ['openai', '单独配置（OpenAI 兼容接口）']])}</Field>
+          {backend === 'dsh' ? (
+            <>
+              <Field label="供应商" hint={models.status === 'failed' ? `模型列表读取失败：${models.error}` : models.status === 'loading' ? '正在读取模型列表…' : undefined}>
+                {providerOptions.length ? (
+                  <select value={provider} disabled={disabled} onChange={event => { set(['decision', 'provider'], event.target.value); set(['decision', 'model'], '') }}>
+                    <option value="">（未选择）</option>
+                    {providerOptions.map(p => <option key={p.provider} value={p.provider}>{p.name}</option>)}
+                    {provider && !providerOptions.some(p => p.provider === provider) ? <option value={provider}>{provider}</option> : null}
+                  </select>
+                ) : text(['decision', 'provider'], '供应商 ID')}
+              </Field>
+              <Field label="模型">
+                {modelList.length ? (
+                  <select value={(get(['decision', 'model']) as string) ?? ''} disabled={disabled} onChange={event => set(['decision', 'model'], event.target.value)}>
+                    <option value="">（未选择）</option>
+                    {modelList.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    {get(['decision', 'model']) && !modelList.some(m => m.id === get(['decision', 'model'])) ? <option value={get(['decision', 'model']) as string}>{get(['decision', 'model']) as string}</option> : null}
+                  </select>
+                ) : text(['decision', 'model'], '模型 ID')}
+              </Field>
+              <Field label="思考强度 ID（可选）">{text(['decision', 'reasoning'])}</Field>
+            </>
+          ) : (
+            <>
+              <Field label="接口地址" hint="填到 /v1 即可，如 https://api.siliconflow.cn/v1；也可填完整的 …/chat/completions">{text(['decision', 'baseURL'], 'https://api.example.com/v1')}</Field>
+              <Field label="模型 ID">{text(['decision', 'model'], '如 Qwen/Qwen3-8B')}</Field>
+              <Field label="凭据引用名" hint={`默认 ${DECISION_DEFAULT_KEY}`}>{text(['decision', 'apiKey'], DECISION_DEFAULT_KEY)}</Field>
+              <Field label="reasoning_effort（可选）" hint="留空不发送；不支持该参数的接口请留空">{text(['decision', 'reasoning'])}</Field>
+            </>
+          )}
           <Field label="单次判断超时（毫秒）">{num(['decision', 'timeoutMs'])}</Field>
           <Field label="相关性低于此值降权（0–1）">{num(['decision', 'keepThreshold'], { step: '0.05' })}</Field>
           <Field label="单批判断候选数">{num(['decision', 'maxCandidates'])}</Field>
         </div>
+        {backend === 'openai' ? (savedBackend === 'openai'
+          ? keyEditor(extraKey(savedDecisionRef), decisionRef === savedDecisionRef)
+          : <p className="dms-warn">先保存设置，再填写该接口的密钥。</p>) : null}
         <Field label="使用环节">
           <span className="dms-checks">{([['route', '选源'], ['rerank', '相关性重排'], ['followup', '补搜判断']] as const).map(([id, label]) => (
             <label key={id}><input type="checkbox" disabled={disabled} checked={stages.includes(id)} onChange={event => set(['decision', 'stages'], event.target.checked ? [...stages, id] : stages.filter(s => s !== id))} />{label}</label>
           ))}</span>
         </Field>
+        {probeLine('decision', '测试决策模型')}
       </fieldset>
     </>
   )

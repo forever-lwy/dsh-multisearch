@@ -124,9 +124,27 @@ github:forever-lwy/dsh-multisearch
 
 补搜触发条件：去重后结果不足、多个来源高度重复、缺少要求的资料类型、所有来源失败。默认只把建议（可尝试的来源和备选查询）返回给模型；`auto_follow_up` 或 deep 档位会在本次调用的来源范围、约束和时间预算内自动补搜：先复用本任务已有候选，再在未尝试的来源上用当前查询，最后才用调用方给的 `alt_queries`。
 
+## 结果重排
+
+`rerank.mode` 为 `service` 时使用专用重排服务。`rerank.provider` 选择预设，`url`、`model`、`apiKey` 留空即用预设值：
+
+| 供应商 | 地址 | 默认模型 | 默认凭据 |
+| --- | --- | --- | --- |
+| `jina` | `https://api.jina.ai/v1/rerank` | `jina-reranker-v2-base-multilingual` | `JINA_API_KEY` |
+| `siliconflow`（硅基流动） | `https://api.siliconflow.cn/v1/rerank` | `BAAI/bge-reranker-v2-m3` | `SILICONFLOW_API_KEY` |
+| `cohere` | `https://api.cohere.com/v2/rerank` | `rerank-v3.5` | `COHERE_API_KEY` |
+| `custom` | 自行填写（Jina/Cohere 兼容接口） | 自行填写 | 自行填写 |
+
+设置页的“测试重排服务”会用两段文本实际调用一次，检查排序是否正确。
+
 ## 决策模型（如 Jev）
 
-在“决策模型”中填写 DSH 模型设置里的供应商 ID 和模型 ID，选择使用环节（`route` 选源、`rerank` 相关性、`followup` 是否继续）。判断批量进行；关闭、超时或输出无效时回退到规则，模型未判断的项保持未知。也可以把“结果重排”设为 Jina/Cohere 兼容的专用重排服务。
+选择使用环节（`route` 选源、`rerank` 相关性、`followup` 是否继续）。判断批量进行；关闭、超时或输出无效时回退到规则，模型未判断的项保持未知。供应商有两种来源（`decision.backend`）：
+
+- `dsh`（默认）：使用 DSH 已配置的供应商（设置页列出 DSH 模型服务里已注册的供应商和模型），经 DSH 的模型运行时调用，与会话使用同一套供应商配置。
+- `openai`：单独配置一个 OpenAI 兼容接口，不依赖 DSH 的供应商。填写 `baseURL`（到 `/v1` 即可，也可填完整的 `/chat/completions`）、`model` 和凭据引用 `apiKey`（默认 `DECISION_API_KEY`）；`reasoning` 非空时作为 `reasoning_effort` 发送。
+
+设置页的“测试决策模型”会实际调用一次，并显示失败原因（如鉴权失败、超时、模型没有返回 JSON）。
 
 ## 配置优先级
 

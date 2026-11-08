@@ -34,7 +34,7 @@ ctx.slots.provideRoot({ hooks: {} })
 
 const value = { profile: 'balanced', tools: { search: true, fetch: true, searchName: 'search', fetchName: 'fetch', guidance: true }, overrides: {}, limits: { maxQueries: 6 },
   routing: { autoRoute: true, defaultSources: ['exa', 'keenable'], rules: [], overlapPenalty: 25, officialDomains: [] }, fetching: { order: ['keenable', 'jina'], allowPrivateNetwork: false, minContentChars: 200, preferRender: [] },
-  rerank: { mode: 'rules', url: 'u', apiKey: 'JINA_API_KEY', model: 'm' }, decision: { enabled: false, provider: '', model: '', reasoning: '', stages: ['rerank'], timeoutMs: 15000, keepThreshold: 0.35, maxCandidates: 30 },
+  rerank: { mode: 'rules', provider: 'jina', url: '', apiKey: '', model: '' }, decision: { enabled: false, backend: 'dsh', provider: '', model: '', reasoning: '', stages: ['rerank'], timeoutMs: 15000, keepThreshold: 0.35, maxCandidates: 30 },
   research: { maxSubagents: 3, maxRounds: 4, maxPages: 30, timeMinutes: 30, maxCalls: 60, modelInvocable: true },
   sources: { exa: { enabled: false, apiKey: 'EXA_API_KEY', priority: 70, baseURL: '', types: [], options: {} } } }
 const form = observable({ status: 'ready', value, base: {}, user: {}, revision: 7, writable: true })
@@ -122,6 +122,21 @@ test('the page edits sources, saves leaf writes at the read revision, and stores
   await click(host.querySelector('[data-action=save]'))
   assert.equal(writes.length, before)
   assert.match(host.textContent, /JSON 无效/)
+  // Rerank providers: switching to SiliconFlow fills the preset as placeholders and saves only the provider.
+  await click([...host.querySelectorAll('.dms-actions button')].find(b => b.textContent === '放弃修改'))
+  await click([...host.querySelectorAll('[role=tab]')].find(b => b.textContent === '重排与决策模型'))
+  const providerSelect = [...host.querySelectorAll('.dms-field')].find(f => f.textContent.startsWith('重排服务供应商')).querySelector('select')
+  await setValue(providerSelect, 'siliconflow')
+  const modelInput = [...host.querySelectorAll('.dms-field')].find(f => f.textContent.startsWith('重排模型')).querySelector('input')
+  assert.equal(modelInput.placeholder, 'BAAI/bge-reranker-v2-m3')
+  await click(host.querySelector('[data-action=save]'))
+  assert.deepEqual(writes.at(-1).ops, [{ op: 'set', path: ['rerank', 'provider'], value: 'siliconflow' }])
+  // Own OpenAI-compatible endpoint for the decision model.
+  const backendSelect = [...host.querySelectorAll('.dms-field')].find(f => f.textContent.startsWith('供应商来源')).querySelector('select')
+  await setValue(backendSelect, 'openai')
+  assert.ok([...host.querySelectorAll('.dms-field')].some(f => f.textContent.startsWith('接口地址')))
+  assert.match(host.textContent, /先保存设置，再填写该接口的密钥/)
+  await click([...host.querySelectorAll('.dms-actions button')].find(b => b.textContent === '放弃修改'))
   // The skill file is edited in place through the remote, outside the settings draft.
   await click([...host.querySelectorAll('[role=tab]')].find(b => b.textContent === '深度研究'))
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })

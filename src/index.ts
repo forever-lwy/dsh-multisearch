@@ -47,11 +47,18 @@ export function apply(ctx: Context, input: unknown): void {
   // Every section is volatile: the settings page edits them in place and the loader
   // emits `loader/volatile-update` instead of remounting, so read through a snapshot.
   let config = snapshotConfig(input)
+  // DSH's model runtime is optional: track it so the decision model can use configured providers.
+  let llm: any
+  ctx.inject(['llm'] as any, scoped => {
+    llm = (scoped as any).llm
+    scoped.effect(() => () => { llm = undefined }, 'multisearch: llm')
+  })
+  const decision = new DecisionModel(() => config, () => llm, reference => resolveKey(ctx, reference))
   const engine = new Engine({
     config: () => config,
     resolveKey: reference => resolveKey(ctx, reference),
     web: () => (ctx as any).get?.('web'),
-    decision: new DecisionModel(() => config, () => (ctx as any).get?.('llm')),
+    decision,
     cache: new PageCache(),
   })
   const stores = new StoreRegistry()
@@ -92,6 +99,6 @@ export function apply(ctx: Context, input: unknown): void {
   ctx.effect(() => () => disposeTools(), 'multisearch: tools')
   ctx.inject(['typert'] as any, scoped => {
     ;(scoped as any).typert.remotes.register(remoteInfo)
-    new MultisearchService(scoped, engine, () => config, skillFile)
+    new MultisearchService(scoped, engine, () => config, skillFile, { decision, llm: () => llm, resolveKey: reference => resolveKey(ctx, reference) })
   })
 }
