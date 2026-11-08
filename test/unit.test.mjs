@@ -210,3 +210,34 @@ test('rerank presets and chat completions URL', async () => {
   assert.equal(chatCompletionsUrl('https://api.siliconflow.cn/v1/'), 'https://api.siliconflow.cn/v1/chat/completions')
   assert.equal(chatCompletionsUrl('https://x.com/v1/chat/completions'), 'https://x.com/v1/chat/completions')
 })
+
+test('decision APIs: endpoint, both request formats, and either reply layout', async () => {
+  const { decisionsUrl, decisionWire } = await import('../lib/presets.js')
+  const { openAIRequest, systemOneRequest, parseAnswers } = await import('../lib/decisions-api.js')
+  assert.equal(decisionsUrl('https://api.openai.com/v1/', 'openai'), 'https://api.openai.com/v1/decisions')
+  assert.equal(decisionsUrl('https://api.typesafe.ai/v1', 'systemone'), 'https://api.typesafe.ai/v1/systemone')
+  assert.equal(decisionsUrl('https://nano-gpt.com/api/v1/decisions', 'systemone'), 'https://nano-gpt.com/api/v1/decisions')
+  assert.equal(decisionWire({ backend: 'decisions', protocol: 'systemone', baseURL: 'https://openrouter.ai/api/v1' }), 'POST https://openrouter.ai/api/v1/systemone')
+  assert.equal(decisionWire({ backend: 'openai', baseURL: 'https://x.com/v1' }), 'POST https://x.com/v1/chat/completions')
+  const questions = [
+    { id: 'go', type: 'bool', instructions: 'More?', true: 'yes', false: 'no' },
+    { id: 'c1', type: 'score', instructions: 'Relevant?', levels: [{ label: 'low' }, { label: 'mid', description: 'some' }, { label: 'high' }] },
+    { id: 'kind', type: 'choice', instructions: 'Kind?', choices: [{ value: 'news', description: 'a news story' }, { value: 'paper' }] },
+  ]
+  const oa = openAIRequest('gpt-6-luna', { a: 1 }, questions)
+  assert.equal(oa.input, '{"a":1}')
+  assert.deepEqual(oa.questions.map(q => [q.type, q.name]), [['predicate', 'go'], ['score', 'c1'], ['choice', 'kind']])
+  assert.match(oa.questions[0].instructions, /True means: yes\nFalse means: no/)
+  assert.deepEqual(oa.questions[1].levels[1], { label: 'mid', description: 'some' })
+  const so = systemOneRequest('typesafe/jev-1.14', { a: 1 }, questions)
+  assert.deepEqual(so.state, { a: 1 })
+  assert.deepEqual(so.questions.go, { type: 'noul', instructions: 'More?', criteria: { true: 'yes', false: 'no' } })
+  assert.deepEqual(so.questions.c1.criteria, ['low', 'mid: some', 'high'])
+  assert.deepEqual(so.questions.kind.criteria, { news: 'a news story', paper: 'paper' })
+  const fromArray = parseAnswers({ answers: [
+    { type: 'predicate', name: 'go', probability: 0.8 }, { type: 'score', name: 'c1', score: 1.5, confidence: 0.6 }, { type: 'refusal', name: 'kind' },
+  ] }, questions)
+  assert.deepEqual([...fromArray], [['go', 0.8], ['c1', 0.75]])
+  const fromObject = parseAnswers({ answers: { go: { type: 'noul', noul: 0.1 }, c1: { type: 'score', score: 2 }, kind: { type: 'choice', choice: 'paper' } } }, questions)
+  assert.deepEqual([...fromObject], [['go', 0.1], ['c1', 1], ['kind', 'paper']])
+})

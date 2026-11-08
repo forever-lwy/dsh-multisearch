@@ -1,6 +1,6 @@
 {
   "name": "@forever-lwy/dsh-multisearch",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Multi-source search and page fetching for DeepSeek Harness: source routing, parallel search, dedupe, rank fusion, fallback fetching, optional decision model, and a deep-research skill",
   "type": "module",
   "main": "lib/index.js",

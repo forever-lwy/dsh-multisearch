@@ -1,4 +1,5 @@
 import type { Config } from './config.js';
+import { chatCompletionsUrl } from './presets.js';
 import type { Candidate, SearchNeed, SourceSpec } from './types.js';
 export interface LlmLike {
     stream(options: Record<string, unknown>): AsyncIterable<any>;
@@ -9,8 +10,7 @@ export interface FollowUpAdvice {
     trySources: string[];
     queries: string[];
 }
-/** Chat completions URL for an OpenAI-compatible base (`…/v1`) or a full endpoint. */
-export declare function chatCompletionsUrl(baseURL: string): string;
+export { chatCompletionsUrl };
 export declare class DecisionModel {
     private readonly config;
     private readonly llm;
@@ -19,6 +19,11 @@ export declare class DecisionModel {
     /** Why the last call fell back, for the settings page test. */
     private lastError;
     enabled(stage: 'route' | 'rerank' | 'followup'): boolean;
+    private backend;
+    /** Why the current backend cannot run, or undefined when it can. */
+    private configured;
+    /** Typed questions to a decision API; undefined (with lastError set) on any failure. */
+    private decide;
     private ask;
     /** A provider configured only for this plugin: plain OpenAI-compatible chat completions. */
     private askOpenAI;

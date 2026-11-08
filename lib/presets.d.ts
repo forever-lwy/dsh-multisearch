@@ -39,3 +39,54 @@ export declare function rerankTarget(rerank: {
     model: string;
 };
 export declare const DECISION_DEFAULT_KEY = "DECISION_API_KEY";
+/**
+ * Decision-API wire formats. Both return typed answers (probabilities / scores) instead of text.
+ * - openai: OpenAI Decisions, `POST …/decisions` with `{ model, input, questions: [...] }`.
+ * - systemone: TypeSafe System One, `POST …/systemone` with `{ model, state, questions: {...} }`;
+ *   Jev's own API, OpenRouter and Vercel AI Gateway speak it.
+ */
+export type DecisionProtocol = 'openai' | 'systemone';
+export declare const DECISION_PROTOCOLS: Record<DecisionProtocol, {
+    label: string;
+    path: string;
+}>;
+/** Fill-in presets for the decision-API backend (the settings page copies them into the fields). */
+export declare const DECISION_ENDPOINTS: {
+    readonly openai: {
+        readonly label: "OpenAI 官方（gpt-6-luna）";
+        readonly protocol: "openai";
+        readonly baseURL: "https://api.openai.com/v1";
+        readonly model: "gpt-6-luna";
+    };
+    readonly typesafe: {
+        readonly label: "TypeSafe（Jev 官方）";
+        readonly protocol: "systemone";
+        readonly baseURL: "https://api.typesafe.ai/v1";
+        readonly model: "jev-latest";
+    };
+    readonly openrouter: {
+        readonly label: "OpenRouter（System One）";
+        readonly protocol: "systemone";
+        readonly baseURL: "https://openrouter.ai/api/v1";
+        readonly model: "typesafe/jev-1.14";
+    };
+    readonly vercel: {
+        readonly label: "Vercel AI Gateway";
+        readonly protocol: "systemone";
+        readonly baseURL: "https://ai-gateway.vercel.sh/typesafe/v1";
+        readonly model: "typesafe-ai/jev";
+    };
+};
+/**
+ * Endpoint for a decision API: a base (`…/v1`) gets the protocol's path appended; a URL that already
+ * ends in `/decisions` or `/systemone` is used as is (some hosts serve System One at `/decisions`).
+ */
+export declare function decisionsUrl(baseURL: string, protocol?: DecisionProtocol): string;
+/** Chat completions URL for an OpenAI-compatible base (`…/v1`) or a full endpoint. */
+export declare function chatCompletionsUrl(baseURL: string): string;
+/** The request each decision backend sends, for the settings page and status text. */
+export declare function decisionWire(decision: {
+    backend?: string;
+    protocol?: string;
+    baseURL?: string;
+}): string;

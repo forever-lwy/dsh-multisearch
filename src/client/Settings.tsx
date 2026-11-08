@@ -1,7 +1,7 @@
 /** Settings → 多源搜索 (also the bundle's page on the Plugins page). Edits stay local until Save. */
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { MultisearchRemote, MultisearchStatus, ProviderModels, SkillStatus } from '../remote.js'
-import { DECISION_DEFAULT_KEY, RERANK_PROVIDERS, RERANK_PROVIDER_IDS, rerankTarget, type RerankProvider } from '../presets.js'
+import { DECISION_DEFAULT_KEY, DECISION_ENDPOINTS, DECISION_PROTOCOLS, RERANK_PROVIDERS, RERANK_PROVIDER_IDS, decisionWire, rerankTarget, type DecisionProtocol, type RerankProvider } from '../presets.js'
 import { deepEqual, diffOps, getIn, setIn, splitList } from './draft.js'
 
 export interface FormLike {
@@ -386,7 +386,9 @@ export function MultisearchSettings(props: SettingsProps) {
   const draftRerank = rerankTarget((get(['rerank']) ?? {}) as any)
   // The key box follows the draft: preset references are known to the Host before the switch is saved.
   const rerankKey = draftRerank.apiKey ? extraKey(draftRerank.apiKey) : undefined
-  const backend = ((get(['decision', 'backend']) as string | undefined) ?? 'dsh') as 'dsh' | 'openai'
+  const backend = ((get(['decision', 'backend']) as string | undefined) ?? 'dsh') as 'dsh' | 'openai' | 'decisions'
+  const protocol = ((get(['decision', 'protocol']) as string | undefined) ?? 'openai') as DecisionProtocol
+  const wire = decisionWire({ backend, protocol, baseURL: (get(['decision', 'baseURL']) as string | undefined) ?? '' })
   const decisionRef = (get(['decision', 'apiKey']) as string | undefined) || DECISION_DEFAULT_KEY
   const savedBackend = (getIn(accepted, ['decision', 'backend']) as string | undefined) ?? 'dsh'
   const providerOptions = models.status === 'ready' ? models.value.providers : []
@@ -438,11 +440,23 @@ export function MultisearchSettings(props: SettingsProps) {
         {probeLine('rerank', '测试重排服务')}
       </fieldset>
       <fieldset>
-        <legend>决策模型（如 Jev）</legend>
-        <p className="dms-hint">用于选源、相关性判断和是否补搜；关闭、超时或输出无效时回退到规则。可以用 DSH 已配置的供应商，也可以单独填写一个 OpenAI 兼容接口。</p>
+        <legend>决策模型（如 Jev、gpt-6-luna）</legend>
+        <p className="dms-hint">用于选源、相关性判断和是否补搜；关闭、超时或输出无效时回退到规则。</p>
         {toggle(['decision', 'enabled'], '启用决策模型')}
         <div className="dms-grid">
-          <Field label="供应商来源">{select(['decision', 'backend'], [['dsh', 'DSH 已配置的供应商'], ['openai', '单独配置（OpenAI 兼容接口）']])}</Field>
+          <Field label="后端">{select(['decision', 'backend'], [
+            ['dsh', 'DSH 已配置的供应商（大模型输出 JSON）'],
+            ['openai', '单独配置：OpenAI 兼容 Chat Completions（大模型输出 JSON）'],
+            ['decisions', '单独配置：决策接口（Decisions / System One）'],
+          ])}</Field>
+        </div>
+        <div className="dms-wire" data-decision-wire={backend}>
+          <p><strong>接口：</strong><code>{wire}</code></p>
+          {backend === 'dsh' ? <p className="dms-hint">经 DSH 的 llm.stream 调用，实际协议由该供应商在 DSH 中的路由决定（如 openai 路由走 POST /v1/responses，Google 走 generateContent）。<strong>本质是让通用大模型按提示输出 JSON</strong>，插件再解析；DSH 目前不提供决策接口，所以 gpt-6-luna 等决策模型在这里也会被当成聊天模型调用。</p> : null}
+          {backend === 'openai' ? <p className="dms-hint">非流式、temperature 0。<strong>本质是让通用大模型按提示输出 JSON</strong>，插件再解析；输出不是合法 JSON 时回退到规则。</p> : null}
+          {backend === 'decisions' ? <p className="dms-hint">把状态和带类型的问题发给决策模型，直接返回概率与分数，<strong>不生成文字、不解析 JSON 文本</strong>。OpenAI 格式发送 input + questions 数组；System One 格式发送 state + questions 对象（Jev/TypeSafe 官方、OpenRouter、Vercel AI Gateway 使用）。补搜判断只决定是否继续、选哪些源，不会提出新的搜索词。</p> : null}
+        </div>
+        <div className="dms-grid">
           {backend === 'dsh' ? (
             <>
               <Field label="供应商" hint={models.status === 'failed' ? `模型列表读取失败：${models.error}` : models.status === 'loading' ? '正在读取模型列表…' : undefined}>
@@ -465,22 +479,41 @@ export function MultisearchSettings(props: SettingsProps) {
               </Field>
               <Field label="思考强度 ID（可选）">{text(['decision', 'reasoning'])}</Field>
             </>
-          ) : (
+          ) : backend === 'openai' ? (
             <>
               <Field label="接口地址" hint="填到 /v1 即可，如 https://api.siliconflow.cn/v1；也可填完整的 …/chat/completions">{text(['decision', 'baseURL'], 'https://api.example.com/v1')}</Field>
               <Field label="模型 ID">{text(['decision', 'model'], '如 Qwen/Qwen3-8B')}</Field>
               <Field label="凭据引用名" hint={`默认 ${DECISION_DEFAULT_KEY}`}>{text(['decision', 'apiKey'], DECISION_DEFAULT_KEY)}</Field>
               <Field label="reasoning_effort（可选）" hint="留空不发送；不支持该参数的接口请留空">{text(['decision', 'reasoning'])}</Field>
             </>
+          ) : (
+            <>
+              <Field label="快速填入" hint="填入接口格式、地址和模型；凭据引用名不变">
+                <select value="" disabled={disabled} data-decision-preset onChange={event => {
+                  const preset = DECISION_ENDPOINTS[event.target.value as keyof typeof DECISION_ENDPOINTS]
+                  if (!preset) return
+                  set(['decision', 'protocol'], preset.protocol)
+                  set(['decision', 'baseURL'], preset.baseURL)
+                  set(['decision', 'model'], preset.model)
+                }}>
+                  <option value="">（选择一个预设）</option>
+                  {Object.entries(DECISION_ENDPOINTS).map(([id, preset]) => <option key={id} value={id}>{preset.label}</option>)}
+                </select>
+              </Field>
+              <Field label="接口格式">{select(['decision', 'protocol'], Object.entries(DECISION_PROTOCOLS).map(([id, p]) => [id, p.label] as [string, string]))}</Field>
+              <Field label="接口地址" hint={`填到 /v1 时自动补 /${DECISION_PROTOCOLS[protocol].path}；也可填完整地址（有的服务用 …/decisions 提供 System One 格式）`}>{text(['decision', 'baseURL'], 'https://api.openai.com/v1')}</Field>
+              <Field label="模型 ID">{text(['decision', 'model'], protocol === 'systemone' ? '如 typesafe/jev-1.14' : '如 gpt-6-luna')}</Field>
+              <Field label="凭据引用名" hint={`默认 ${DECISION_DEFAULT_KEY}；以 Bearer 发送`}>{text(['decision', 'apiKey'], DECISION_DEFAULT_KEY)}</Field>
+            </>
           )}
           <Field label="单次判断超时（毫秒）">{num(['decision', 'timeoutMs'])}</Field>
           <Field label="相关性低于此值降权（0–1）">{num(['decision', 'keepThreshold'], { step: '0.05' })}</Field>
           <Field label="单批判断候选数">{num(['decision', 'maxCandidates'])}</Field>
         </div>
-        {backend === 'openai' ? (extraKey(decisionRef)
+        {backend !== 'dsh' ? (extraKey(decisionRef)
           ? keyEditor(extraKey(decisionRef), true)
           : status.status === 'ready' ? <p className="dms-warn">凭据引用名 {decisionRef} 是新填写的，先点页面底部的“保存”，再在这里填写密钥。</p> : null) : null}
-        {backend === 'openai' && savedBackend !== 'openai' ? <p className="dms-warn">“单独配置”还没保存：密钥可以先存，记得点页面底部的“保存”。</p> : null}
+        {backend !== 'dsh' && savedBackend !== backend ? <p className="dms-warn">后端切换还没保存：密钥可以先存，记得点页面底部的“保存”。</p> : null}
         <Field label="使用环节">
           <span className="dms-checks">{([['route', '选源'], ['rerank', '相关性重排'], ['followup', '补搜判断']] as const).map(([id, label]) => (
             <label key={id}><input type="checkbox" disabled={disabled} checked={stages.includes(id)} onChange={event => set(['decision', 'stages'], event.target.checked ? [...stages, id] : stages.filter(s => s !== id))} />{label}</label>

@@ -1,6 +1,6 @@
 /** Settings schema, profile presets and the effective per-call tuning. */
 import z from '@deepseek-ai/schemastery';
-import { type RerankProvider } from './presets.js';
+import { type DecisionProtocol, type RerankProvider } from './presets.js';
 import type { ProfileName, ResourceType, SourceSpec } from './types.js';
 /** Every per-call execution knob. Presets fill all of them. */
 export interface Tuning {
@@ -91,8 +91,14 @@ export interface Config {
     };
     decision: {
         enabled: boolean;
-        /** dsh: a provider route configured in DSH; openai: any OpenAI-compatible chat completions endpoint. */
-        backend: 'dsh' | 'openai';
+        /**
+         * dsh: a DSH provider route (its chat protocol; the LLM replies with JSON);
+         * openai: an OpenAI-compatible chat completions endpoint (the LLM replies with JSON);
+         * decisions: a decision API (OpenAI Decisions or System One) answering typed questions.
+         */
+        backend: 'dsh' | 'openai' | 'decisions';
+        /** Wire format of the decision API (backend decisions). */
+        protocol: DecisionProtocol;
         provider: string;
         model: string;
         reasoning: string;
