@@ -115,6 +115,12 @@ github:forever-lwy/dsh-multisearch
 | `focus` | 传给支持定向提取的服务 |
 | `crawl` | `{mode: "map" | "crawl", max_pages, max_depth, include_paths, exclude_paths, same_domain}` |
 
+**一次抓取的总预算**（`fetchTotalTokens`，按 token 估算：中文约 1 字 1 token，其他约 4 字符 1 token）：同一次调用里的所有页面共用这份预算，默认 fast 6,000、balanced 8,000、deep 10,000，低于 DSH 工具结果的内联上限（`dsh-spill-policy` 的 `maxInlineTokens`，默认 12,500）。超出时 DSH 会只保留开头和结尾、把中间转存成文件，模型要再用 `read` 读回来。分配方式：
+- 从短到长依次分配。能装进“剩余预算 ÷ 剩余页数”的页面完整返回，放不下的页面平分剩下的预算，在段落边界截断，每页至少 1,200 字。
+- 被截短的页面带 `offset` 续读提示。全文在本任务缓存里，续读不重新请求网络。
+- 输出开头列出哪些页面被截短。
+- 单页仍受 `fetchMaxChars` 约束；`max_chars` 只改单页上限，总预算照样生效。设为 0 不限制。调高 DSH 的 `maxInlineTokens` 后，可以同步调高这里。
+
 ## 选源与补搜
 
 1. 指定 `sources` 时只用这些来源，补搜也不越界。
@@ -161,11 +167,11 @@ github:forever-lwy/dsh-multisearch
 
 单次调用参数 ＞ 设置中的逐项覆盖 ＞ 档位默认值，最后受“硬性上限”约束。
 
-| 档位 | 并行来源 | 每源候选 | 返回条数 | 输出预算 | 单次时限 | 自动补搜 |
-| --- | --- | --- | --- | --- | --- | --- |
-| fast | 1 | 6 | 6 | ~2,000 tokens | 15 s | 否 |
-| balanced | 2 | 8 | 8 | ~4,000 tokens | 30 s | 否（返回建议） |
-| deep | 4 | 10 | 12 | ~8,000 tokens | 60 s | 是，最多 2 轮 |
+| 档位 | 并行来源 | 每源候选 | 返回条数 | 输出预算 | 每页字符 / 一次抓取总预算 | 单次时限 | 自动补搜 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| fast | 1 | 6 | 6 | ~2,000 tokens | 8,000 / ~6,000 tokens | 15 s | 否 |
+| balanced | 2 | 8 | 8 | ~4,000 tokens | 15,000 / ~8,000 tokens | 30 s | 否（返回建议） |
+| deep | 4 | 10 | 12 | ~8,000 tokens | 30,000 / ~10,000 tokens | 60 s | 是，最多 2 轮 |
 
 ## deep-research 技能文件
 

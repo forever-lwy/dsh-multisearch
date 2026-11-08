@@ -13,7 +13,7 @@ const OPTION_KEYS: Record<string, keyof Tuning> = {
   parallel_sources: 'parallelSources', query_concurrency: 'queryConcurrency', per_source_results: 'perSourceResults',
   auto_follow_up: 'autoFollowUp', follow_up_rounds: 'followUpRounds', min_results: 'minResults',
   request_timeout_ms: 'requestTimeoutMs', call_timeout_ms: 'callTimeoutMs', fetch_concurrency: 'fetchConcurrency',
-  fetch_max_chars: 'fetchMaxChars', fetch_retries: 'fetchRetries', fetch_fallbacks: 'fetchFallbacks', cache_ttl_minutes: 'cacheTtlMinutes',
+  fetch_max_chars: 'fetchMaxChars', fetch_total_tokens: 'fetchTotalTokens', fetch_retries: 'fetchRetries', fetch_fallbacks: 'fetchFallbacks', cache_ttl_minutes: 'cacheTtlMinutes',
   candidate_limit: 'candidateLimit', return_results: 'returnResults', output_tokens: 'outputTokens', snippet_chars: 'snippetChars', rerank: 'rerank',
 }
 
@@ -128,12 +128,12 @@ export function registerTools(ctx: Context, engine: Engine, stores: StoreRegistr
 
   if (config.tools.fetch) disposers.push(ctx.tools.register(defineTool({
     name: names.fetch,
-    description: `Read web pages as clean text. Pass URLs or search reference ids (S3). Several targets run in parallel; each URL tries reading services in order (${fetchList.join(' → ')}) until it gets usable body text, detecting login walls, empty and truncated pages. Use \`keywords\` to return only matching sections with their heading, conditions and table headers; use \`offset\` to continue a long page. \`crawl\` discovers or reads pages within one site.`,
+    description: `Read web pages as clean text. Pass URLs or search reference ids (S3). Several targets run in parallel; each URL tries reading services in order (${fetchList.join(' → ')}) until it gets usable body text, detecting login walls, empty and truncated pages. Use \`keywords\` to return only matching sections with their heading, conditions and table headers; use \`offset\` to continue a long page. All pages of one call share a size budget: short pages come back whole, long ones are cut and marked with the offset to continue (served from cache, no new request). \`crawl\` discovers or reads pages within one site.`,
     parameters: {
       urls: { type: 'array', items: { type: 'string' }, required: true, description: `1–${config.limits.maxFetchUrls} URLs or reference ids from search (e.g. "S2").` },
       keywords: { type: 'array', items: { type: 'string' }, description: 'Return only sections mentioning these terms (with surrounding context).' },
       offset: { type: 'integer', description: 'Character offset to continue reading from (from a previous next offset).' },
-      max_chars: { type: 'integer', description: 'Characters to return per page.' },
+      max_chars: { type: 'integer', description: 'Characters to return per page (the call-wide size budget still applies).' },
       context_chars: { type: 'integer', description: 'Context to keep around each keyword match (default 600).' },
       live: { type: 'boolean', description: 'Bypass caches and fetch a fresh copy.' },
       services: { type: 'array', items: { type: 'string' }, description: `Force reading services in this order: ${fetchList.join(', ')}.` },

@@ -36,7 +36,7 @@ const TUNING: [string, string, 'number' | 'boolean'][] = [
   ['autoFollowUp', '自动补搜', 'boolean'], ['followUpRounds', '补搜轮数', 'number'], ['minResults', '结果少于此数触发补搜', 'number'],
   ['duplicateRatio', '重复占比高于此值触发补搜（0–1）', 'number'],
   ['requestTimeoutMs', '单请求超时（毫秒）', 'number'], ['callTimeoutMs', '单次调用总时限（毫秒）', 'number'],
-  ['fetchConcurrency', '抓取并发数', 'number'], ['fetchMaxChars', '每页返回字符数', 'number'], ['fetchRetries', '同一服务重试次数', 'number'],
+  ['fetchConcurrency', '抓取并发数', 'number'], ['fetchMaxChars', '每页返回字符数', 'number'], ['fetchTotalTokens', '一次抓取总预算（约 tokens，0 不限）', 'number'], ['fetchRetries', '同一服务重试次数', 'number'],
   ['fetchFallbacks', '同一 URL 最多尝试服务数', 'number'], ['cacheTtlMinutes', '正文缓存时效（分钟）', 'number'],
 ]
 

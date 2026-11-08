@@ -241,3 +241,11 @@ test('decision APIs: endpoint, both request formats, and either reply layout', a
   const fromObject = parseAnswers({ answers: { go: { type: 'noul', noul: 0.1 }, c1: { type: 'score', score: 2 }, kind: { type: 'choice', choice: 'paper' } } }, questions)
   assert.deepEqual([...fromObject], [['go', 0.1], ['c1', 1], ['kind', 'paper']])
 })
+
+test('fetch total budget: per-profile defaults, 0 turns it off, hard ceiling', async () => {
+  const { Config, effectiveTuning, snapshotConfig } = await import('../lib/config.js')
+  const config = snapshotConfig(Config({}))
+  assert.deepEqual(['fast', 'balanced', 'deep'].map(p => effectiveTuning(config, p, {}).fetchTotalTokens), [6000, 8000, 10000])
+  assert.equal(effectiveTuning(snapshotConfig(Config({ overrides: { fetchTotalTokens: 0 } })), 'deep', {}).fetchTotalTokens, 0)
+  assert.equal(effectiveTuning(config, 'deep', { fetchTotalTokens: 10_000_000 }).fetchTotalTokens, 200_000)
+})
