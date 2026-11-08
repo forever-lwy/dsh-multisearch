@@ -506,3 +506,43 @@ test('settings service: rerank and decision keys are writable; test buttons repo
   const probe = await service.testDecision({}, signal)
   assert.equal(probe.ok, true, probe.detail)
 })
+
+test('decision API backend: OpenAI Decisions reranks end to end; System One routes and judges follow-up', async t => {
+  const calls = mockFetch(t, [
+    ['https://api.exa.ai/search', () => ({ json: exaHits(['https://one.com', 'https://two.com', 'https://three.com']) })],
+    ['https://relay.example/v1/decisions', (url, init, body) => ({ json: { answers: body.questions.map(q => ({ type: 'score', name: q.name, score: q.name === 'c3' ? 4 : 0.2, confidence: 0.9 })) } })],
+    ['https://openrouter.ai/api/v1/systemone', (url, init, body) => ({ json: { answers: Object.fromEntries(Object.entries(body.questions).map(([id, q]) =>
+      [id, q.type === 'noul' ? { type: 'noul', noul: id === 'continue' ? 0.9 : id === 't2' ? 0.8 : 0.1 } : { type: 'score', score: id === 's2' ? 4 : 1, confidence: 0.7 }])) } })],
+  ])
+  const { call } = await boot(t, {
+    sources: only(['exa']),
+    decision: { enabled: true, backend: 'decisions', protocol: 'openai', baseURL: 'https://relay.example/v1', model: 'gpt-6-luna', apiKey: 'OPENAI_API_KEY', stages: ['rerank'] },
+  }, { credentials: { EXA_API_KEY: 'k-exa-123456', OPENAI_API_KEY: 'sk-relay-123456' } })
+  const ranked = await call('search', { queries: ['x'], sources: ['exa'] })
+  const order = [...ranked.text.matchAll(/^\s+(https:\/\/\w+\.com)/gm)].map(m => m[1])
+  assert.equal(order[0], 'https://three.com', ranked.text)
+  const request = calls.find(c => c.url === 'https://relay.example/v1/decisions')
+  assert.equal(request.headers.authorization, 'Bearer sk-relay-123456')
+  assert.equal(request.body.model, 'gpt-6-luna')
+  assert.equal(typeof request.body.input, 'string')
+  assert.deepEqual(request.body.questions.map(q => q.type), ['score', 'score', 'score'])
+  assert.equal(request.body.questions[0].levels.length, 5)
+  assert.ok(!calls.some(c => c.url.includes('chat/completions') || c.url.includes('/responses')))
+
+  const { DecisionModel } = await import('../lib/decision.js')
+  const Plugin = await import('../lib/index.js')
+  const config = Plugin.snapshotConfig(Plugin.Config({ decision: { enabled: true, backend: 'decisions', protocol: 'systemone', baseURL: 'https://openrouter.ai/api/v1', model: 'typesafe/jev-1.14', stages: ['route', 'followup'] } }))
+  const decision = new DecisionModel(() => config, () => undefined, async () => 'sk-or')
+  const need = { queries: ['q'], altQueries: [], types: [], preferOfficial: false, sites: [], excludeSites: [] }
+  const specs = [{ id: 'exa', blurb: 'web', types: ['web'] }, { id: 'consensus', blurb: 'papers', types: ['academic'] }]
+  const scores = await decision.routeScores(need, specs, new AbortController().signal)
+  assert.deepEqual([...scores], [['exa', 0.25], ['consensus', 1]])
+  const advice = await decision.followUp(need, 'two results', specs, new AbortController().signal)
+  assert.deepEqual(advice, { continue: true, reason: '决策接口：需要补搜的概率 0.90', trySources: ['consensus'], queries: [] })
+  const systemOne = calls.filter(c => c.url === 'https://openrouter.ai/api/v1/systemone').at(-1)
+  assert.equal(systemOne.body.questions.continue.type, 'noul')
+  assert.deepEqual(systemOne.body.state.untried_sources.map(s => s.source), ['exa', 'consensus'])
+  const probe = await decision.probe(new AbortController().signal)
+  assert.equal(probe.ok, false)
+  assert.match(probe.detail, /P\(true\)=0\.10/)
+})

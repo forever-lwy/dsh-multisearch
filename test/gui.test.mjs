@@ -34,7 +34,7 @@ ctx.slots.provideRoot({ hooks: {} })
 
 const value = { profile: 'balanced', tools: { search: true, fetch: true, searchName: 'search', fetchName: 'fetch', guidance: true }, overrides: {}, limits: { maxQueries: 6 },
   routing: { autoRoute: true, defaultSources: ['exa', 'keenable'], rules: [], overlapPenalty: 25, officialDomains: [] }, fetching: { order: ['keenable', 'jina'], allowPrivateNetwork: false, minContentChars: 200, preferRender: [] },
-  rerank: { mode: 'rules', provider: 'jina', url: '', apiKey: '', model: '' }, decision: { enabled: false, backend: 'dsh', provider: '', model: '', reasoning: '', stages: ['rerank'], timeoutMs: 15000, keepThreshold: 0.35, maxCandidates: 30 },
+  rerank: { mode: 'rules', provider: 'jina', url: '', apiKey: '', model: '' }, decision: { enabled: false, backend: 'dsh', protocol: 'openai', baseURL: '', provider: '', model: '', reasoning: '', stages: ['rerank'], timeoutMs: 15000, keepThreshold: 0.35, maxCandidates: 30 },
   research: { maxSubagents: 3, maxRounds: 4, maxPages: 30, timeMinutes: 30, maxCalls: 60, modelInvocable: true },
   sources: { exa: { enabled: false, apiKey: 'EXA_API_KEY', priority: 70, baseURL: '', types: [], options: {} } } }
 const form = observable({ status: 'ready', value, base: {}, user: {}, revision: 7, writable: true })
@@ -141,12 +141,32 @@ test('the page edits sources, saves leaf writes at the read revision, and stores
   await click(host.querySelector('[data-action=save]'))
   assert.deepEqual(writes.at(-1).ops, [{ op: 'set', path: ['rerank', 'provider'], value: 'siliconflow' }])
   // Own OpenAI-compatible endpoint for the decision model.
-  const backendSelect = [...host.querySelectorAll('.dms-field')].find(f => f.textContent.startsWith('供应商来源')).querySelector('select')
+  const decisionBox = [...host.querySelectorAll('fieldset')].find(f => f.querySelector('legend')?.textContent.startsWith('决策模型'))
+  // Every backend names the request it sends; the chat backends say they prompt for JSON.
+  assert.match(decisionBox.querySelector('[data-decision-wire=dsh]').textContent, /本质是让通用大模型按提示输出 JSON/)
+  const backendSelect = [...host.querySelectorAll('.dms-field')].find(f => f.textContent.startsWith('后端')).querySelector('select')
   await setValue(backendSelect, 'openai')
   assert.ok([...host.querySelectorAll('.dms-field')].some(f => f.textContent.startsWith('接口地址')))
-  const decisionBox = [...host.querySelectorAll('fieldset')].find(f => f.querySelector('legend')?.textContent.startsWith('决策模型'))
+  assert.match(decisionBox.querySelector('[data-decision-wire=openai]').textContent, /POST \{接口地址\}\/chat\/completions[\s\S]*本质是让通用大模型按提示输出 JSON/)
   assert.equal(decisionBox.querySelector('input[type=password]').placeholder, '输入 DECISION_API_KEY 的值')
   assert.equal(decisionBox.querySelector('input[type=password]').disabled, false)
+  // Decision API: presets fill format, address and model; the shown endpoint follows the format.
+  await setValue(backendSelect, 'decisions')
+  await setValue(decisionBox.querySelector('[data-decision-preset]'), 'openrouter')
+  assert.match(decisionBox.querySelector('[data-decision-wire=decisions]').textContent, /POST https:\/\/openrouter\.ai\/api\/v1\/systemone[\s\S]*不生成文字/)
+  const formatSelect = [...decisionBox.querySelectorAll('.dms-field')].find(f => f.textContent.startsWith('接口格式')).querySelector('select')
+  assert.equal(formatSelect.value, 'systemone')
+  const address = [...decisionBox.querySelectorAll('.dms-field')].find(f => f.textContent.startsWith('接口地址')).querySelector('input')
+  await setValue(address, 'https://api-run.yuziyou.cn/v1')
+  await setValue(formatSelect, 'openai')
+  assert.match(decisionBox.querySelector('[data-decision-wire]').textContent, /POST https:\/\/api-run\.yuziyou\.cn\/v1\/decisions/)
+  assert.equal(decisionBox.querySelector('input[type=password]').disabled, false)
+  await click(host.querySelector('[data-action=save]'))
+  const saved = Object.fromEntries(writes.at(-1).ops.map(op => [op.path.join('.'), op.value]))
+  assert.equal(saved['decision.backend'], 'decisions')
+  assert.ok(!('decision.protocol' in saved)) // back to the saved format: nothing to write
+  assert.equal(saved['decision.baseURL'], 'https://api-run.yuziyou.cn/v1')
+  assert.equal(saved['decision.model'], 'typesafe/jev-1.14')
   await click([...host.querySelectorAll('.dms-actions button')].find(b => b.textContent === '放弃修改'))
   // The skill file is edited in place through the remote, outside the settings draft.
   await click([...host.querySelectorAll('[role=tab]')].find(b => b.textContent === '深度研究'))

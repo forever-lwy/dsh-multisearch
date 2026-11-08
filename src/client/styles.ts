@@ -20,6 +20,9 @@ export const styles = `
 .dms-settings [data-action=save]{background:var(--dsw-alias-brand-primary,#4d6bfe);color:#fff;border-color:transparent}
 .dms-actions{position:sticky;bottom:0;display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 0;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-module-platform,#fff));border-top:1px solid var(--dsw-alias-border-l2,#8884);z-index:1}
 .dms-hint,.dms-field small,.dms-card small{font-size:12px;color:var(--dsw-alias-label-tertiary,#888)}
+.dms-wire{border-left:3px solid var(--dsw-alias-border-l2,#8886);padding:2px 0 2px 10px;margin:8px 0}
+.dms-wire p{margin:4px 0}
+.dms-wire code{overflow-wrap:anywhere;font-size:12px}
 .dms-err{color:var(--dsw-alias-state-error-primary,#d54941);overflow-wrap:anywhere}
 .dms-ok{color:var(--dsw-alias-state-success-primary,#16945f)}
 .dms-warn{color:var(--dsw-alias-state-warning-primary,#c27c0e)}

@@ -137,14 +137,25 @@ github:forever-lwy/dsh-multisearch
 
 设置页的“测试重排服务”会用两段文本实际调用一次，检查排序是否正确。
 
-## 决策模型（如 Jev）
+## 决策模型（如 Jev、gpt-6-luna）
 
-选择使用环节（`route` 选源、`rerank` 相关性、`followup` 是否继续）。判断批量进行；关闭、超时或输出无效时回退到规则，模型未判断的项保持未知。供应商有两种来源（`decision.backend`）：
+选择使用环节（`route` 选源、`rerank` 相关性、`followup` 是否继续）。判断批量进行；关闭、超时或输出无效时回退到规则，模型未判断的项保持未知。后端有三种（`decision.backend`），走的接口不同：
 
-- `dsh`（默认）：使用 DSH 已配置的供应商（设置页列出 DSH 模型服务里已注册的供应商和模型），经 DSH 的模型运行时调用，与会话使用同一套供应商配置。
-- `openai`：单独配置一个 OpenAI 兼容接口，不依赖 DSH 的供应商。填写 `baseURL`（到 `/v1` 即可，也可填完整的 `/chat/completions`）、`model` 和凭据引用 `apiKey`（默认 `DECISION_API_KEY`）；`reasoning` 非空时作为 `reasoning_effort` 发送。
+| 后端 | 实际请求 | 原理 |
+|---|---|---|
+| `dsh`（默认） | DSH `llm.stream` → 该供应商在 DSH 中路由的聊天协议，例如 `openai` 路由为 `POST /v1/responses`，Google 为 `generateContent` | **让通用大模型按提示输出 JSON**，插件解析 |
+| `openai` | `POST {baseURL}/chat/completions`（非流式，temperature 0） | **让通用大模型按提示输出 JSON**，插件解析 |
+| `decisions` | OpenAI 格式：`POST {baseURL}/decisions`；System One 格式：`POST {baseURL}/systemone` | 决策接口直接返回概率与分数，不生成文字 |
 
-设置页的“测试决策模型”会实际调用一次，并显示失败原因（如鉴权失败、超时、模型没有返回 JSON）。
+- `dsh`：使用 DSH 已配置的供应商（设置页列出 DSH 模型服务里已注册的供应商和模型）。DSH 0.2.2 只提供聊天接口、没有决策（classifier）接口，所以在这里选 gpt-6-luna 也会被当成聊天模型，走 `/v1/responses`。
+- `openai`：单独配置一个 OpenAI 兼容接口。填写 `baseURL`（到 `/v1` 即可，也可填完整的 `/chat/completions`）、`model` 和凭据引用 `apiKey`（默认 `DECISION_API_KEY`）；`reasoning` 非空时作为 `reasoning_effort` 发送。
+- `decisions`：决策接口。`protocol` 选格式：
+  - `openai`（OpenAI Decisions）：`{ model, input, questions: [{ type: predicate|score|choice, name, instructions, levels|choices }] }`，答案为数组。OpenAI 官方（`https://api.openai.com/v1`，模型 `gpt-6-luna`）以及兼容它的中转。
+  - `systemone`（System One）：`{ model, state, questions: { id: { type: noul|score|choice, instructions, criteria } } }`，答案为按 id 的对象。Jev/TypeSafe 官方（`https://api.typesafe.ai/v1`）、OpenRouter（`https://openrouter.ai/api/v1`，如 `typesafe/jev-1.14`、`openai/gpt-6-luna-decisions`）、Vercel AI Gateway（`https://ai-gateway.vercel.sh/typesafe/v1`）。
+  - `baseURL` 填到 `/v1` 时按格式补 `/decisions` 或 `/systemone`；已经以这两者结尾的完整地址原样使用（有的服务在 `…/decisions` 上提供 System One 格式，选 `systemone` 并填完整地址即可）。凭据以 `Authorization: Bearer` 发送。回复两种布局都能解析。
+  - 三个环节的问法：选源和相关性各是一道 5 级 `score` 题，分数归一到 0–1；补搜是一道“是否继续”的判断题，外加每个未试来源一道判断题，概率 ≥ 0.5 的来源按概率排序后建议尝试。决策接口不生成文字，所以**补搜不会提出新的搜索词**，沿用规则给出的备选查询。每次请求最多 100 道题，超出时分批。设置页有 OpenAI 官方、TypeSafe、OpenRouter、Vercel 四个“快速填入”预设。
+
+设置页的“后端”下方显示当前实际请求的地址；“测试决策模型”会实际调用一次并显示失败原因（如鉴权失败、超时、模型没有返回 JSON、决策接口没有回答）。
 
 ## 配置优先级
 
