@@ -40,6 +40,9 @@ export interface Limits {
 }
 export interface SourceSettings {
     enabled: boolean;
+    /** Per-capability switches; a disabled capability is never routed to. */
+    search: boolean;
+    fetch: boolean;
     apiKey: string;
     priority: number;
     baseURL: string;

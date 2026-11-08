@@ -229,12 +229,11 @@ test('Consensus uses the documented query parameters and x-api-key', async t => 
   assert.match(out.text, /study=systematic review/)
 })
 
-test('host-specific readers only see their hosts; model readers go last and are marked as generated', async t => {
+test('host-specific readers only see their hosts; Gemini has no fetch even when listed in the order', async t => {
   const calls = mockFetch(t, [
     ['https://arctic-shift.photon-reddit.com/api/posts/ids', () => ({ json: { data: [{ title: 'Bun thread', subreddit: 'javascript', author: 'a', score: 5, created_utc: 1700000000, selftext: 'is bun ready? '.repeat(20) }] } })],
     ['https://arctic-shift.photon-reddit.com/api/comments/tree', () => ({ json: { data: [{ kind: 't1', data: { author: 'b', score: 3, body: 'yes for scripts', replies: { data: { children: [{ kind: 't1', data: { author: 'c', score: 1, body: 'not for native addons' } }] } } } }] } })],
     ['https://r.jina.ai/', () => ({ status: 500, json: { code: 500 } })],
-    [url => url.includes('generativelanguage.googleapis.com'), () => ({ json: { candidates: [{ content: { parts: [{ text: 'Model rendering of the page. '.repeat(20) }] }, urlContextMetadata: { urlMetadata: [{ urlRetrievalStatus: 'URL_RETRIEVAL_STATUS_SUCCESS' }] } }] } })],
   ])
   const { call } = await boot(t, { sources: only(['arcticshift', 'jina', 'gemini', 'hackernews']), fetching: { order: ['gemini', 'jina'] }, overrides: { fetchRetries: 0 } }, { credentials: { GOOGLE_API_KEY: 'g-key-123456' } })
   const reddit = await call('fetch', { urls: ['https://www.reddit.com/r/javascript/comments/abc123/bun_thread/'] })
@@ -242,9 +241,9 @@ test('host-specific readers only see their hosts; model readers go last and are 
   assert.match(reddit.text, /u\/b \(3\): yes for scripts/)
   assert.match(reddit.text, /  - u\/c \(1\): not for native addons/)
   const other = await call('fetch', { urls: ['https://example.org/page'] })
-  assert.match(other.text, /尝试 jina:error.* → gemini:ok/, 'gemini last despite configured order; HN/Arctic Shift never tried')
-  assert.match(other.text, /服务生成的转述（非原文，需核实）/)
-  assert.ok(!calls.some(c => c.url.includes('hn.algolia.com')))
+  assert.match(other.text, /尝试 jina:error\(HTTP 500/)
+  assert.doesNotMatch(other.text, /gemini/)
+  assert.ok(!calls.some(c => c.url.includes('hn.algolia.com') || c.url.includes('generativelanguage')))
 })
 
 test('You.com and Linkup read pages through their own endpoints', async t => {
@@ -328,4 +327,89 @@ test('settings service reports readiness and writes only credentials the setting
   assert.equal(status.sources.find(s => s.id === 'exa').searchReady.ok, true)
   await assert.rejects(service.setCredential({ ref: 'OPENAI_API_KEY_OTHER', value: 'x' }, signal), /不属于本插件/)
   assert.deepEqual(await service.clearCredential({ ref: 'EXA_API_KEY' }, signal), { configured: false })
+})
+
+test('live-test fixes: Bright Data parsed_light, Nimble without rendering, Arctic Shift title fallback', async t => {
+  const calls = mockFetch(t, [
+    ['https://api.brightdata.com/request', () => ({ json: { general: {}, input: {}, organic: [{ link: 'https://bd.com/a', title: 'BD', description: 'bright data organic result' }] } })],
+    ['https://sdk.nimbleway.com/v2/extract', () => ({ json: { data: { markdown: 'nimble page '.repeat(40) }, status_code: 200 } })],
+    [url => url.includes('/api/posts/search') && url.includes('query='), () => ({ status: 422, json: { data: null, error: 'Timeout. Maybe slow down a bit' } })],
+    [url => url.includes('/api/posts/search') && url.includes('title='), () => ({ json: { data: [{ permalink: '/r/rust/comments/abc/tokio/', title: 'Tokio thread', selftext: 'scheduler', created_utc: 1700000000 }] } })],
+  ])
+  const { call } = await boot(t, { sources: only(['brightdata', 'nimble', 'arcticshift'], { brightdata: { options: { serpZone: 'serp_zone' } } }) }, { credentials: { BRIGHTDATA_API_KEY: 'bd-key-123456', NIMBLE_API_KEY: 'nb-key-123456' } })
+  const bd = await call('search', { queries: ['rust edition'], sources: ['brightdata'] })
+  assert.match(bd.text, /https:\/\/bd\.com\/a/)
+  const bdCall = calls.find(c => c.url.startsWith('https://api.brightdata.com'))
+  assert.equal(bdCall.body.data_format, 'parsed_light')
+  assert.doesNotMatch(bdCall.body.url, /brd_json/)
+  await call('fetch', { urls: ['https://n.com/'], services: ['nimble'] })
+  assert.equal(calls.find(c => c.url.startsWith('https://sdk.nimbleway.com')).body.render, false)
+  const reddit = await call('search', { queries: ['tokio'], sources: ['arcticshift'], sites: ['reddit.com/r/rust'] })
+  assert.match(reddit.text, /comments\/abc\/tokio/)
+})
+
+test('per-source switches: a source with search or fetch turned off is never routed to', async t => {
+  const calls = mockFetch(t, [
+    ['https://api.exa.ai/search', () => ({ json: { results: [{ url: 'https://e.com/a', title: 'E', highlights: ['exa result about hooks'] }] } })],
+    ['https://api.tavily.com/search', () => ({ json: { results: [{ url: 'https://t.com/a', title: 'T', content: 'tavily result about hooks' }] } })],
+    ['https://api.exa.ai/contents', () => ({ json: { results: [{ url: 'https://p.com/', text: 'exa page '.repeat(60) }] } })],
+    ['https://api.tavily.com/extract', () => ({ json: { results: [{ url: 'https://p.com/', raw_content: 'tavily page '.repeat(60) }] } })],
+  ])
+  const { call, ctx } = await boot(t, {
+    sources: only(['exa', 'tavily'], { exa: { fetch: false }, tavily: { search: false } }),
+    routing: { defaultSources: ['exa', 'tavily'] }, fetching: { order: ['exa', 'tavily'] }, overrides: { minResults: 1, fetchRetries: 0 },
+  }, { credentials: { EXA_API_KEY: 'exa-key-123456', TAVILY_API_KEY: 'tvly-key-123456' } })
+  const found = await call('search', { queries: ['react hooks'] })
+  assert.match(found.text, /e\.com\/a/)
+  assert.ok(!calls.some(c => c.url.startsWith('https://api.tavily.com/search')))
+  const explicit = await call('search', { queries: ['react hooks'], sources: ['tavily'] })
+  assert.match(explicit.text, /已关闭搜索/)
+  const page = await call('fetch', { urls: ['https://p.com/'] })
+  assert.match(page.text, /服务 tavily/)
+  assert.ok(!calls.some(c => c.url.startsWith('https://api.exa.ai/contents')))
+  void ctx
+})
+
+test('Parallel goes through the free Search MCP: one session, no key by default', async t => {
+  const { resetMcpSessions } = await import('../lib/sources/mcp.js')
+  resetMcpSessions()
+  const sse = message => ({ text: `event: message\ndata: ${JSON.stringify(message)}\n\n`, headers: { 'content-type': 'text/event-stream', 'mcp-session-id': 'sess-1' } })
+  const calls = mockFetch(t, [['https://mcp.parallel.ai/mcp', (url, init, body) => {
+    if (body.method === 'initialize') return sse({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-06-18', capabilities: {} } })
+    if (body.method === 'notifications/initialized') return { status: 202, text: '' }
+    if (body.params.name === 'web_search') return sse({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: '{}' }], structuredContent: { results: [{ url: 'https://par.com/a', title: 'P', publish_date: '2025-02-01', excerpts: ['parallel excerpt about rust editions'] }] } } })
+    return sse({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: JSON.stringify({ results: [{ url: 'https://par.com/a', title: 'P', full_content: 'parallel full page '.repeat(40), excerpts: [] }], errors: [] }) }] } })
+  }]])
+  const { call } = await boot(t, { sources: only(['parallel']) }, { credentials: { PARALLEL_API_KEY: 'par-key-123456' } })
+  const out = await call('search', { queries: ['rust editions'], sources: ['parallel'], sites: ['doc.rust-lang.org/book'] })
+  assert.match(out.text, /https:\/\/par\.com\/a/)
+  const page = await call('fetch', { urls: ['https://par.com/a'], services: ['parallel'] })
+  assert.match(page.text, /服务 parallel/)
+  assert.equal(calls.filter(c => c.body?.method === 'initialize').length, 1, 'session reused')
+  assert.ok(calls.every(c => !c.headers.authorization), 'no key sent unless sendKey')
+  assert.ok(calls.filter(c => c.body?.method === 'tools/call').every(c => c.headers['mcp-session-id'] === 'sess-1'))
+  const search = calls.find(c => c.body?.params?.name === 'web_search')
+  assert.deepEqual(search.body.params.arguments.search_queries, ['rust editions site:doc.rust-lang.org'])
+})
+
+test('TinyFish maps filters to query parameters and per-URL errors to page states', async t => {
+  const calls = mockFetch(t, [
+    ['https://api.search.tinyfish.ai/', () => ({ json: { results: [{ position: 1, url: 'https://paper.org/x', title: 'Paper', snippet: 'tiny result', year: 2024, venue: 'NeurIPS', cited_by_count: 12, authors: ['A', 'B'] }] } })],
+    ['https://api.fetch.tinyfish.ai/', (url, init, body) => body.urls[0].includes('login')
+      ? { json: { results: [], errors: [{ url: body.urls[0], error: 'login_required' }] } }
+      : { json: { results: [{ url: body.urls[0], final_url: body.urls[0], title: 'T', text: 'tinyfish page '.repeat(50) }], errors: [] } }],
+  ])
+  const { call } = await boot(t, { sources: only(['tinyfish']), overrides: { fetchRetries: 0 } }, { credentials: { TINYFISH_API_KEY: 'tf-key-123456' } })
+  const out = await call('search', { queries: ['diffusion models'], sources: ['tinyfish'], source_types: ['academic'], after: '2023-01-01', sites: ['arxiv.org'] })
+  assert.match(out.text, /https:\/\/paper\.org\/x/)
+  const q = new URL(calls[0].url).searchParams
+  assert.equal(q.get('domain_type'), 'research_paper')
+  assert.equal(q.get('pub_year_min'), '2023')
+  assert.equal(q.get('include_domains'), 'arxiv.org')
+  assert.equal(calls[0].headers['x-api-key'], 'tf-key-123456')
+  const ok = await call('fetch', { urls: ['https://site.com/a'], services: ['tinyfish'] })
+  assert.match(ok.text, /服务 tinyfish/)
+  assert.equal(calls.at(-1).body.format, 'markdown')
+  const wall = await call('fetch', { urls: ['https://site.com/login'], services: ['tinyfish'] })
+  assert.match(wall.text, /blocked/)
 })

@@ -62,6 +62,9 @@ export interface Limits {
 
 export interface SourceSettings {
   enabled: boolean
+  /** Per-capability switches; a disabled capability is never routed to. */
+  search: boolean
+  fetch: boolean
   apiKey: string
   priority: number
   baseURL: string
@@ -119,6 +122,8 @@ const tuningSchema = z.object({
 function sourceSchema(spec: SourceSpec) {
   return z.object({
     enabled: z.boolean().default(spec.defaultEnabled ?? false).description('启用'),
+    search: spec.caps.search ? z.boolean().default(true).description('使用其搜索功能') : z.boolean().default(false).hidden(),
+    fetch: spec.caps.fetch ? z.boolean().default(true).description('使用其抓取功能') : z.boolean().default(false).hidden(),
     apiKey: spec.credential
       ? z.string().role('credential-ref').default(spec.credential).description(spec.keyOptional ? 'API Key 凭据引用（可选）' : 'API Key 凭据引用')
       : z.string().default('').hidden(),
@@ -135,7 +140,7 @@ export const ALL_SPECS: SourceSpec[] = [...STATIC_ADAPTERS.map(a => a.spec), ...
 
 const sourcesSchema = z.object(Object.fromEntries(ALL_SPECS.map(spec => [spec.id, sourceSchema(spec)])))
 
-export const DEFAULT_FETCH_ORDER = ['keenable', 'jina', 'http', 'builtin', 'firecrawl', 'tavily', 'exa', 'you', 'linkup', 'crawl4ai', 'contextdev', 'parallel', 'anysearch', 'scrapingant', 'nimble', 'brightdata', 'gemini', 'openai']
+export const DEFAULT_FETCH_ORDER = ['keenable', 'jina', 'http', 'builtin', 'firecrawl', 'tavily', 'exa', 'you', 'linkup', 'crawl4ai', 'contextdev', 'parallel', 'anysearch', 'scrapingant', 'nimble', 'brightdata', 'tinyfish']
 
 export const Config: z<Config> = z.object({
   profile: z.union([...PROFILES]).default('balanced').volatile().description('默认档位：fast 快速 / balanced 均衡 / deep 深入'),
@@ -256,6 +261,8 @@ export function sourceSettings(config: Config, id: string): SourceSettings {
   const raw = (config.sources as Record<string, Partial<SourceSettings> | undefined>)[id] ?? {}
   return {
     enabled: raw.enabled ?? spec?.defaultEnabled ?? false,
+    search: raw.search ?? true,
+    fetch: raw.fetch ?? true,
     apiKey: raw.apiKey ?? spec?.credential ?? '',
     priority: raw.priority ?? spec?.priority ?? 50,
     baseURL: raw.baseURL ?? '',

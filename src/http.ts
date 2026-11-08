@@ -117,7 +117,7 @@ export const http: HttpClient = {
     const { response, signal } = await request(url, init, 'text/html,application/xhtml+xml,text/plain;q=0.9,application/pdf;q=0.5,*/*;q=0.3')
     try {
       const { text } = await readCapped(response, init.maxBytes ?? DEFAULT_MAX_BYTES)
-      return { status: response.status, text, url: response.url || url, contentType: response.headers.get('content-type') ?? '' }
+      return { status: response.status, text, url: response.url || url, contentType: response.headers.get('content-type') ?? '', headers: Object.fromEntries(response.headers) }
     } catch (error) {
       throw describe(error, signal, init.signal)
     }

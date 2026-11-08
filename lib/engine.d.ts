@@ -119,8 +119,6 @@ export interface FetchItem {
     matches?: number;
     truncated: boolean;
     publishedAt?: string;
-    /** Model-written rendering of the page, not verbatim text. */
-    generated?: boolean;
     error?: string;
 }
 export interface FetchOutcome {

@@ -226,7 +226,7 @@ export function MultisearchSettings(props: SettingsProps) {
           <tbody>{sources.map(s => {
             const enabled = Boolean(getIn(accepted, ['sources', s.id, 'enabled']) ?? s.defaultEnabled)
             const cell = (supported: boolean, ready: { ok: boolean; reason?: string }) => !supported ? <Badge state="off">不支持</Badge>
-              : !enabled ? <Badge state="off">未启用</Badge> : ready.ok ? <Badge state="ok">可用</Badge> : <Badge state="bad" title={ready.reason}>{ready.reason ?? '不可用'}</Badge>
+              : !enabled ? <Badge state="off">未启用</Badge> : ready.ok ? <Badge state="ok">可用</Badge> : <Badge state={ready.reason?.startsWith('已关闭') ? 'off' : 'bad'} title={ready.reason}>{ready.reason ?? '不可用'}</Badge>
             return <tr key={s.id}><td>{s.label}</td><td>{enabled ? '是' : '否'}</td><td>{cell(s.search, s.searchReady)}</td><td>{cell(s.fetch, s.fetchReady)}</td></tr>
           })}</tbody>
         </table>
@@ -296,11 +296,19 @@ export function MultisearchSettings(props: SettingsProps) {
                 <input type="checkbox" checked={enabled} disabled={disabled} onChange={event => set([...base, 'enabled'], event.target.checked)} />
                 <strong>{s.label}</strong>
               </label>
-              <Badge state={s.search ? (s.searchReady.ok ? 'ok' : 'bad') : 'off'} title={s.searchReady.reason}>搜索{s.search ? (s.searchReady.ok ? ' ✓' : `：${s.searchReady.reason}`) : '：不支持'}</Badge>
-              <Badge state={s.fetch ? (s.fetchReady.ok ? 'ok' : 'bad') : 'off'} title={s.fetchReady.reason}>抓取{s.fetch ? (s.fetchReady.ok ? ' ✓' : `：${s.fetchReady.reason}`) : '：不支持'}</Badge>
+              <Badge state={s.search ? (s.searchReady.ok ? 'ok' : s.searchReady.reason?.startsWith('已关闭') ? 'off' : 'bad') : 'off'} title={s.searchReady.reason}>搜索{s.search ? (s.searchReady.ok ? ' ✓' : `：${s.searchReady.reason}`) : '：不支持'}</Badge>
+              <Badge state={s.fetch ? (s.fetchReady.ok ? 'ok' : s.fetchReady.reason?.startsWith('已关闭') ? 'off' : 'bad') : 'off'} title={s.fetchReady.reason}>抓取{s.fetch ? (s.fetchReady.ok ? ' ✓' : `：${s.fetchReady.reason}`) : '：不支持'}</Badge>
               <code className="dms-hint">{s.id}</code>
             </div>
             <small>{s.blurb}</small>
+            {s.search || s.fetch ? (
+              <span className="dms-checks" style={{ margin: '6px 0 2px' }}>
+                {([['search', '使用搜索', s.search], ['fetch', '使用抓取', s.fetch]] as const).filter(([, , supported]) => supported).map(([cap, label]) => (
+                  <label key={cap}><input type="checkbox" data-cap={cap} disabled={disabled || !enabled} checked={(get([...base, cap]) as boolean | undefined) ?? true}
+                    onChange={event => set([...base, cap], event.target.checked)} />{label}</label>
+                ))}
+              </span>
+            ) : null}
             {keyEditor(s.credential, savedRef)}
             <details className="dms-more">
               <summary>高级设置</summary>

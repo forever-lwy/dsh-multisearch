@@ -10,7 +10,6 @@ export interface PageRecord {
     status: 'ok' | 'partial';
     truncated: boolean;
     publishedAt?: string;
-    generated?: boolean;
 }
 export interface RefEntry {
     ref: string;

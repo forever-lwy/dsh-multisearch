@@ -17,7 +17,7 @@ github:forever-lwy/dsh-multisearch
 安装后打开 **设置 → 多源搜索**（插件页里本插件的详情页显示同一页面）：
 
 - **概览**：每个来源当前能否搜索、能否抓取，不能用时写明原因（缺密钥、缺 zone、自建服务没有搜索等）。
-- **搜索源与密钥**：启用来源、填写密钥（点“保存密钥”立即写入 DSH 凭据存储，不进设置文件）；高级设置里可改凭据引用名、优先级、接口地址、能力标签和来源专属参数。
+- **搜索源与密钥**：启用来源，并用“使用搜索”“使用抓取”两个开关分别关闭某个来源的搜索或抓取（对应 `sources.<id>.search` / `sources.<id>.fetch`，默认都开）；填写密钥（点“保存密钥”立即写入 DSH 凭据存储，不进设置文件）；高级设置里可改凭据引用名、优先级、接口地址、能力标签和来源专属参数。
 - **常规与档位**：默认档位、工具名、逐项覆盖档位值（留空跟随档位）、硬性上限。
 - **路由与抓取**、**重排与决策模型**、**深度研究**：对应下文各节。
 
@@ -36,48 +36,51 @@ github:forever-lwy/dsh-multisearch
 | 元宝搜索 | 凭据值可以是服务 API KEY（走 `api.wsa.cloud.tencent.com`，Bearer），也可以是 `SecretId:SecretKey`（走 `wsa.tencentcloudapi.com`，TC3 签名）；`options.edition` 为 `lite` 时不发送 Mode/Cnt/Industry |
 | Crawl4AI | 默认 `options.mode: cloud`，使用官方云 `api.crawl4ai.com` 和 `CRAWL4AI_API_KEY`（`sk_live_…`）；改为 `self-hosted` 并填写 `baseURL` 即使用自建服务（自建版没有搜索） |
 | SciVerse | `SCIVERSE_API_TOKEN`（`sv-…`） |
-| Bright Data | 搜索需要 `options.serpZone`，抓取需要 `options.unlockerZone`，两者分别生效 |
+| Bright Data | 搜索需要 `options.serpZone`，抓取需要 `options.unlockerZone`（Web Unlocker 需付费）；不用抓取时关掉“使用抓取”即可 |
+| Parallel | 经免费的 Search MCP（`https://mcp.parallel.ai/mcp`，`web_search` / `web_fetch`）调用，不需要 Key；`options.sendKey` 设为 `true` 才会把 `PARALLEL_API_KEY` 作为 Bearer 发送（换取更高限额，但账户没有余额时会返回 402） |
+| TinyFish | `TINYFISH_API_KEY`，以 `X-API-Key` 发送；搜索和抓取在每日免费额度内不计费 |
 | Consensus | `options` 可开 `fullTextChunks`（付费计划返回全文相关段落）、`excludePreprints`、`medicalMode`、`domain`（学科代码） |
 | Linkup | `options.renderJs`（默认开）、`fetchMode`（`standard` / `pro`） |
-| Gemini / OpenAI | `options.model` 指定模型；Gemini 默认沿用 `GOOGLE_API_KEY` |
+| Gemini / OpenAI | `options.model` 指定模型；Gemini 默认沿用 `GOOGLE_API_KEY`；只提供搜索（生成带引用的答案），不用于抓取网页 |
 
 ## 来源与能力
 
-每个来源的搜索和抓取能力独立判断是否可用：缺少凭据或必需设置时，结果的“执行情况”里会写明原因。
+每个来源的搜索和抓取能力独立判断是否可用，也可在设置里分别关闭：缺少凭据、必需设置或已关闭时，结果的“执行情况”里会写明原因。
 
 | ID | 服务 | 搜索 | 抓取 | 主要类型 | 接入状态 |
 | --- | --- | --- | --- | --- | --- |
 | keenable | Keenable | ✓ | ✓ | web, news, documentation | 在线实测（无 Key 公开端点） |
-| anysearch | AnySearch | ✓ | ✓ | 通用、学术、财经、代码、社媒、中文 | 按官方文档 |
-| exa | Exa | ✓ | ✓（/contents） | 文档、代码、论文、企业 | 按官方文档 |
-| tavily | Tavily | ✓ | ✓（/extract，另有站点发现） | web, news, finance | 按官方文档 |
-| parallel | Parallel | ✓ | ✓（/v1/extract） | 复杂比较、背景调查 | 按官方 OpenAPI |
-| nimble | Nimble | ✓ | ✓（/v2/extract，渲染） | web, news, company | 按官方文档 |
+| anysearch | AnySearch | ✓ | ✓ | 通用、学术、财经、代码、社媒、中文 | Key 实测（2026-11-08） |
+| exa | Exa | ✓ | ✓（/contents） | 文档、代码、论文、企业 | Key 实测（2026-11-08） |
+| tavily | Tavily | ✓ | ✓（/extract，另有站点发现） | web, news, finance | Key 实测（2026-11-08） |
+| parallel | Parallel | ✓（Search MCP `web_search`） | ✓（Search MCP `web_fetch`，全文） | 复杂比较、背景调查 | 免费 MCP 在线实测（2026-11-08） |
+| nimble | Nimble | ✓ | ✓（/v2/extract；`options.render` 开启浏览器渲染，默认关闭，实测开启要两分钟以上） | web, news, company | Key 实测（2026-11-08） |
 | brave | Brave Search API | ✓ | — 官方无按 URL 读取接口 | web, news | 按官方文档 |
-| you | You.com | ✓ | ✓（Contents API） | web, news | 按官方文档 |
-| linkup | Linkup | ✓ | ✓（/v1/fetch，可渲染 JS） | 事实核查、企业 | 按官方 OpenAPI |
-| yuanbao | 元宝搜索 | ✓ | — 官方只有 SearchPro 搜索接口 | 中文、新闻、政府、学术、财经 | 按官方文档 |
-| gemini | Gemini + Google Search | ✓（生成） | ✓（URL Context，生成的转述） | answer | 按官方文档 |
-| openai | OpenAI + Web Search | ✓（生成） | ✓（模型打开网页后转述） | answer | 按官方文档 |
-| brightdata | Bright Data | ✓（Google SERP） | ✓（Web Unlocker） | 受限站点 | 按官方文档 |
-| firecrawl | Firecrawl | ✓ | ✓（另有站点发现） | 文档站、PDF | 按官方文档（v2） |
-| contextdev | Context.dev | ✓ | ✓ | 企业、品牌、新闻 | 按官方文档 |
+| you | You.com | ✓ | ✓（Contents API） | web, news | Key 实测（2026-11-08） |
+| linkup | Linkup | ✓ | ✓（/v1/fetch，可渲染 JS） | 事实核查、企业 | Key 实测（2026-11-08） |
+| yuanbao | 元宝搜索 | ✓ | — 官方只有 SearchPro 搜索接口 | 中文、新闻、政府、学术、财经 | Key 实测（2026-11-08）（服务 API KEY） |
+| gemini | Gemini + Google Search | ✓（生成） | — 不提供（模型转述不适合作为原文） | answer | Key 实测（2026-11-08） |
+| openai | OpenAI + Web Search | ✓（生成） | — 不提供（模型转述不适合作为原文） | answer | Key 实测（2026-11-08） |
+| brightdata | Bright Data | ✓（Google SERP，`data_format: parsed_light`；实测 10–70 秒） | ✓（Web Unlocker） | 受限站点 | 搜索Key 实测（2026-11-08）；抓取未实测 |
+| tinyfish | TinyFish | ✓（web / news / research_paper，论文带作者、期刊、引用数） | ✓（Fetch API，markdown，含动态页面与 PDF） | web, news, academic | 按官方文档（未用 Key 实测） |
+| firecrawl | Firecrawl | ✓ | ✓（另有站点发现） | 文档站、PDF | Key 实测（2026-11-08）（v2） |
+| contextdev | Context.dev | ✓ | ✓ | 企业、品牌、新闻 | Key 实测（2026-11-08） |
 | jina | Jina | ✓（需 Key） | ✓（Reader，无 Key 可用） | 正文读取、PDF | 读取在线实测 |
-| scrapingant | ScrapingAnt | ✓（经代理抓取 DuckDuckGo 结果页） | ✓（/v2/markdown） | 动态网页 | 结果页解析在线实测；接口未用 Key 实测 |
-| crawl4ai | Crawl4AI 官方云 / 自建 | ✓（仅官方云） | ✓ | 浏览器抓取 | 按官方 llms.txt |
-| weir | Weir | ✓ | ✓（X/Reddit 帖子与评论） | X、Reddit | 按官方 OpenAPI |
-| arcticshift | Arctic Shift | ✓（须在 sites 指定 `reddit.com/r/<社区>`） | ✓（Reddit 帖子与评论树） | Reddit 归档 | 在线实测 |
+| scrapingant | ScrapingAnt | ✓（经代理抓取 DuckDuckGo 结果页） | ✓（/v2/markdown） | 动态网页 | Key 实测（2026-11-08） |
+| crawl4ai | Crawl4AI 官方云 / 自建 | ✓（仅官方云） | ✓ | 浏览器抓取 | 官方云Key 实测（2026-11-08） |
+| weir | Weir | ✓ | ✓（X/Reddit 帖子与评论） | X、Reddit | Key 实测（2026-11-08） |
+| arcticshift | Arctic Shift | ✓（须在 sites 指定 `reddit.com/r/<社区>`；全文检索 422 超时时改按标题检索） | ✓（Reddit 帖子与评论树） | Reddit 归档 | 在线实测；公共服务负载高时会返回 422 |
 | hackernews | Hacker News (Algolia) | ✓ | ✓（HN 帖子与评论） | 技术社区 | 在线实测 |
-| consensus | Consensus | ✓ | — 官方无读取接口（付费计划可在搜索中附全文段落） | 学术证据 | 按官方文档 |
-| sciverse | SciVerse | ✓（agentic-search） | ✓（按 doc_id 或 DOI 读全文） | 学术文献 | 按官方 llms.txt |
+| consensus | Consensus | ✓ | — 官方无读取接口（付费计划可在搜索中附全文段落） | 学术证据 | Key 实测（2026-11-08） |
+| sciverse | SciVerse | ✓（agentic-search） | ✓（按 doc_id 或 DOI 读全文） | 学术文献 | Key 实测（2026-11-08） |
 | huggingface | Hugging Face | ✓ | ✓（模型/数据集卡片、论文摘要） | 模型、数据集、论文 | 在线实测 |
 | context7 | Context7 | ✓ | ✓（按库读取文档） | 编程库文档 | 在线实测 |
 | builtin | DSH 内置网页服务 | ✓ | ✓ | web | 依赖部署配置 |
 | http | 直接请求 | — | ✓ | web | 在线实测；默认拒绝本机与内网地址 |
 
-“按官方文档/OpenAPI”表示请求和解析按服务文档实现并有模拟测试，但没有用真实 Key 调用过；首次使用请留意结果中的“执行情况”。
+“按官方文档/OpenAPI”表示请求和解析按服务文档实现并有模拟测试，但没有用真实 Key 调用过；首次使用请留意结果中的“执行情况”。Gemini 搜索和 Bright Data 响应较慢，单请求超时（`requestTimeoutMs`，deep 档 20 秒）内可能来不及返回。
 
-只认识特定站点的读取器（Weir、Arctic Shift、Hacker News、Hugging Face、Context7、SciVerse）只用于对应站点的链接，并排在回退顺序最前；Gemini、OpenAI 的模型转述总是排在最后，结果标注“服务生成的转述（非原文）”。
+只认识特定站点的读取器（Weir、Arctic Shift、Hacker News、Hugging Face、Context7、SciVerse）只用于对应站点的链接，并排在回退顺序最前。抓取只使用返回网页原文的服务，不使用模型转述。
 
 ## 工具参数
 

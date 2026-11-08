@@ -12,6 +12,8 @@ export interface RoutableSource {
   fetchUsable?: boolean
   /** Why search is not ready, when it is not. */
   reason?: string
+  /** Why fetch is not ready, when it is not. */
+  fetchReason?: string
 }
 
 export interface RouteChoice {
