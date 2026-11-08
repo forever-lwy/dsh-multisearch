@@ -59,7 +59,7 @@ export class MultisearchService extends TypertRemoteService {
         defaultTypes: [...spec.types], defaultPriority: spec.priority, defaultOptions: { ...(spec.options ?? {}) }, defaultEnabled: Boolean(spec.defaultEnabled),
         ...(credential ? { credential } : {}),
         searchReady: spec.caps.search ? { ok: source.usable, ...(source.usable ? {} : { reason: reasons.reason ?? '不可用' }) } : { ok: false, reason: '不支持搜索' },
-        fetchReady: spec.caps.fetch ? { ok: Boolean(source.fetchUsable), ...(source.fetchUsable ? {} : { reason: '缺少凭据或必需设置' }) } : { ok: false, reason: '不支持抓取' },
+        fetchReady: spec.caps.fetch ? { ok: Boolean(source.fetchUsable), ...(source.fetchUsable ? {} : { reason: source.fetchReason ?? '不可用' }) } : { ok: false, reason: '不支持抓取' },
       }
     }))
     const extra = config.rerank.apiKey ? [{ ref: config.rerank.apiKey, ...(await this.describe(config.rerank.apiKey)) }] : []

@@ -268,9 +268,9 @@ async function resolveRedirect(url: string, signal: AbortSignal): Promise<string
 export const gemini: SourceAdapter = {
   spec: {
     id: 'gemini', label: 'Gemini + Google Search', engine: 'google', priority: 55,
-    caps: { search: true, fetch: true, answer: true, paraphrase: true, pdf: true }, types: ['answer', 'web', 'news'], filters: { site: true, time: true, language: true },
+    caps: { search: true, answer: true }, types: ['answer', 'web', 'news'], filters: { site: true, time: true, language: true },
     credential: 'GOOGLE_API_KEY',
-    blurb: '模型自动搜索 Google 并给出带来源的综合答案；URL Context 由模型读取指定网页（均为生成内容，需与原文核对）',
+    blurb: '模型自动搜索 Google 并给出带来源的综合答案（生成内容，需与原文核对）',
     options: { model: 'gemini-2.5-flash' },
   },
   async search(q, env) {
@@ -298,32 +298,12 @@ export const gemini: SourceAdapter = {
   },
 }
 
-/** OpenAI declines verbatim reproduction; ask for a detailed faithful digest instead. */
-const DIGEST_PROMPT = (url: string, focus?: string) => `Open ${url} and give a detailed, faithful account of its main content in Markdown, following the page's own structure and headings. Keep concrete facts, names, dates, numbers, versions, code identifiers, commands and caveats exactly as written; quote short key passages. Omit navigation, ads and footers. Add no outside information or commentary.${focus ? ` Focus on: ${focus}.` : ''} If the page cannot be retrieved, reply exactly: PAGE_UNAVAILABLE`
-const REFUSAL = /^(sorry|i'?m sorry|i can(?:no|')t|抱歉|很抱歉)/i
-
-const READ_PROMPT = (url: string, focus?: string) => `Open ${url} and reproduce its main content as faithfully as possible in Markdown: keep headings, lists, tables, code, numbers and caveats verbatim; omit navigation, ads and footers. Do not summarize or add commentary.${focus ? ` Focus on: ${focus}.` : ''} If the page cannot be retrieved, reply exactly: PAGE_UNAVAILABLE`
-
-gemini.fetch = async (r, env) => {
-  const key = requireKey(env.apiKey, 'Gemini')
-  const model = String(env.options.model || 'gemini-2.5-flash')
-  const data = await env.http.json(joinUrl(env.baseURL, 'https://generativelanguage.googleapis.com', `/v1beta/models/${encodeURIComponent(model)}:generateContent`), {
-    body: { contents: [{ role: 'user', parts: [{ text: READ_PROMPT(r.url, r.focus) }] }], tools: [{ url_context: {} }] },
-    headers: { 'x-goog-api-key': key }, signal: r.signal, timeoutMs: r.timeoutMs,
-  })
-  const candidate = arr(data.candidates)[0]
-  const status = arr(candidate?.urlContextMetadata?.urlMetadata)[0]?.urlRetrievalStatus
-  const text = arr(candidate?.content?.parts).map(p => str(p.text) ?? '').join('')
-  if ((status && status !== 'URL_RETRIEVAL_STATUS_SUCCESS') || /PAGE_UNAVAILABLE/.test(text)) return { url: r.url, content: '', statusCode: 502, generated: true }
-  return { url: r.url, content: text, generated: true }
-}
-
 export const openai: SourceAdapter = {
   spec: {
     id: 'openai', label: 'OpenAI + Web Search', engine: 'openai', priority: 55,
-    caps: { search: true, fetch: true, answer: true, paraphrase: true }, types: ['answer', 'web'], filters: { site: true, region: true },
+    caps: { search: true, answer: true }, types: ['answer', 'web'], filters: { site: true, region: true },
     credential: 'OPENAI_API_KEY',
-    blurb: 'Responses API 网页搜索，生成带引用的答案；也可让模型打开指定网页转述（均为生成内容，需与原文核对）',
+    blurb: 'Responses API 网页搜索，生成带引用的答案（生成内容，需与原文核对）',
     options: { model: 'gpt-5-mini' },
   },
   async search(q, env) {
@@ -355,20 +335,6 @@ export const openai: SourceAdapter = {
     }
     return { generated: text || undefined, hits: found }
   },
-}
-
-openai.fetch = async (r, env) => {
-  const key = requireKey(env.apiKey, 'OpenAI')
-  let host = ''
-  try { host = new URL(r.url).hostname } catch { /* validated upstream */ }
-  const data = await env.http.json(joinUrl(env.baseURL, 'https://api.openai.com', '/v1/responses'), {
-    body: { model: String(env.options.model || 'gpt-5-mini'), tools: [{ type: 'web_search', ...(host ? { filters: { allowed_domains: [host.replace(/^www\./, '')] } } : {}) }], input: DIGEST_PROMPT(r.url, r.focus) },
-    headers: { authorization: `Bearer ${key}` }, signal: r.signal, timeoutMs: r.timeoutMs,
-  })
-  if (data.error) throw new SourceError(`OpenAI: ${str(data.error.message) ?? 'error'}`, 'upstream')
-  const text = arr(data.output).filter(i => i.type === 'message').flatMap(i => arr(i.content)).filter(p => p.type === 'output_text').map(p => str(p.text) ?? '').join('')
-  if (/PAGE_UNAVAILABLE/.test(text) || (text.length < 400 && REFUSAL.test(text.trim()))) return { url: r.url, content: '', statusCode: 502, generated: true }
-  return { url: r.url, content: text, generated: true }
 }
 
 /** Generic Jina/Cohere-compatible rerank call used by the reranker stage. */

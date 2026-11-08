@@ -1,7 +1,8 @@
 /** General web search and reading services. */
 import { createHash, createHmac } from 'node:crypto'
-import type { SourceAdapter } from '../types.js'
+import type { AdapterEnv, SourceAdapter } from '../types.js'
 import { SourceError } from '../http.js'
+import { MCP_SESSION_TAG, callTool } from './mcp.js'
 import { afterDate, arr, clip, hit, hits, isCjk, joinUrl, num, requireKey, str, withSiteOperators } from './util.js'
 
 const SNIPPET = 600
@@ -164,46 +165,48 @@ export const tavily: SourceAdapter = {
 
 const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
+const PARALLEL_MCP = 'https://mcp.parallel.ai/mcp'
+const bareDomain = (site: string) => site.replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '')
+
+/** Parallel through its free Search MCP (`web_search` / `web_fetch`); the REST API needs a paid plan. */
 export const parallel: SourceAdapter = {
   spec: {
     id: 'parallel', label: 'Parallel', engine: 'parallel', priority: 68,
-    caps: { search: true, fetch: true }, types: ['web', 'documentation', 'academic', 'company'],
-    filters: { site: true, time: true, region: true }, credential: 'PARALLEL_API_KEY',
-    blurb: '以目标描述驱动的跨站搜索，返回面向模型的摘录，适合复杂比较和背景调查',
-    options: { mode: 'fast' },
+    caps: { search: true, fetch: true, render: true, pdf: true }, types: ['web', 'documentation', 'academic', 'company'],
+    filters: { site: true }, credential: 'PARALLEL_API_KEY', keyOptional: true,
+    blurb: '以目标描述驱动的跨站搜索，返回面向模型的摘录，适合复杂比较和背景调查；经免费的 Search MCP 调用',
+    options: { sendKey: false },
   },
+  gate: ({ hasKey, options }) => options.sendKey && !hasKey ? { search: '已开启 sendKey 但缺少凭据', fetch: '已开启 sendKey 但缺少凭据' } : {},
   async search(q, env) {
-    const key = requireKey(env.apiKey, 'Parallel')
+    const sites = q.need.sites.slice(0, 3).map(bareDomain).filter(Boolean)
     const after = afterDate(q.need)
-    const sourcePolicy = {
-      ...(q.need.sites.length ? { include_domains: q.need.sites } : {}),
-      ...(!q.need.sites.length && q.need.excludeSites.length ? { exclude_domains: q.need.excludeSites } : {}),
-      ...(after ? { after_date: after } : {}),
-    }
-    const data = await env.http.json(joinUrl(env.baseURL, 'https://api.parallel.ai', '/v1/search'), {
-      body: {
-        objective: q.need.goal || q.query, search_queries: [q.query], mode: String(env.options.mode || 'fast'),
-        advanced_settings: {
-          max_results: Math.min(20, q.maxResults), excerpt_settings: { max_chars_per_result: 1500 },
-          ...(Object.keys(sourcePolicy).length ? { source_policy: sourcePolicy } : {}),
-          ...(q.need.region ? { location: q.need.region.toUpperCase() } : {}),
-        },
-      },
-      headers: { 'x-api-key': key }, signal: q.signal, timeoutMs: q.timeoutMs,
+    const objective = [q.need.goal || q.query, after ? `Prefer sources published after ${after}.` : ''].filter(Boolean).join(' ')
+    const data = await callTool(mcpTarget(q, env), 'web_search', {
+      objective: objective.slice(0, 2000),
+      search_queries: sites.length ? sites.map(site => `${q.query} site:${site}`) : [q.query],
+      session_id: MCP_SESSION_TAG,
     })
-    return { hits: hits(arr(data.results).map(r => hit(r.url, { title: str(r.title), snippet: clip(arr(r.excerpts).join(' … '), SNIPPET), content: arr(r.excerpts).join('\n\n') || undefined, publishedAt: str(r.publish_date) }))) }
+    return { hits: hits(arr(data.results).slice(0, q.maxResults).map(r => hit(r.url, { title: str(r.title), snippet: clip(arr(r.excerpts).join(' … '), SNIPPET), content: arr(r.excerpts).join('\n\n') || undefined, publishedAt: str(r.publish_date) }))) }
   },
   async fetch(r, env) {
-    const key = requireKey(env.apiKey, 'Parallel')
-    const data = await env.http.json(joinUrl(env.baseURL, 'https://api.parallel.ai', '/v1/extract'), {
-      body: { urls: [r.url], ...(r.focus ? { objective: r.focus } : {}), advanced_settings: { full_content: true } },
-      headers: { 'x-api-key': key }, signal: r.signal, timeoutMs: r.timeoutMs,
+    const data = await callTool(mcpTarget(r, env), 'web_fetch', {
+      urls: [r.url], full_content: true, ...(r.focus ? { objective: r.focus.slice(0, 200) } : {}), session_id: MCP_SESSION_TAG,
     })
     const first = arr(data.results)[0]
-    if (!first) throw new SourceError(`Parallel: ${str(arr(data.errors)[0]?.content) ?? str(arr(data.errors)[0]?.error_type) ?? 'extract failed'}`, 'upstream')
+    if (!first) {
+      const error = arr(data.errors)[0]
+      throw new SourceError(`Parallel: ${str(error?.content) ?? str(error?.error_type) ?? str(data.text) ?? 'extract failed'}`, 'upstream')
+    }
     const full = typeof first.full_content === 'string' ? first.full_content : str(first.full_content?.content)
     return { url: r.url, title: str(first.title), content: full ?? arr(first.excerpts).join('\n\n'), publishedAt: str(first.publish_date) }
   },
+}
+
+function mcpTarget(request: { signal: AbortSignal; timeoutMs: number }, env: AdapterEnv) {
+  // The anonymous tier is free; a key only helps with paid credit (without it the server answers 402).
+  const headers: Record<string, string> = env.options.sendKey && env.apiKey ? { authorization: `Bearer ${env.apiKey}` } : {}
+  return { http: env.http, endpoint: env.baseURL || PARALLEL_MCP, headers, signal: request.signal, timeoutMs: request.timeoutMs }
 }
 
 export const nimble: SourceAdapter = {
@@ -468,5 +471,72 @@ export const brightdata: SourceAdapter = {
     })
     if (res.status >= 400) throw new SourceError(`Bright Data HTTP ${res.status}: ${res.text.slice(0, 200)}`, res.status === 401 ? 'auth' : 'upstream', res.status)
     return { url: r.url, content: res.text }
+  },
+}
+
+const RECENCY_MINUTES = { day: 1440, week: 10_080, month: 43_200, year: 525_600 } as const
+
+/** TinyFish Search (GET api.search.tinyfish.ai) and Fetch (POST api.fetch.tinyfish.ai); free within a daily allowance. */
+export const tinyfish: SourceAdapter = {
+  spec: {
+    id: 'tinyfish', label: 'TinyFish', engine: 'tinyfish', priority: 60,
+    caps: { search: true, fetch: true, render: true, pdf: true }, types: ['web', 'news', 'academic'],
+    filters: { site: true, time: true, language: true, region: true }, credential: 'TINYFISH_API_KEY',
+    blurb: '通用网页、新闻与论文检索（论文带作者、期刊、引用数），正文抓取支持动态页面与 PDF；每日免费额度内不计费',
+  },
+  async search(q, env) {
+    const key = requireKey(env.apiKey, 'TinyFish')
+    const wanted = q.need.types
+    const domainType = wanted.length && wanted.every(t => t === 'academic') ? 'research_paper' : wanted.includes('news') && !wanted.includes('web') ? 'news' : undefined
+    const after = q.need.after
+    const query: Record<string, string | number | undefined> = {
+      query: q.query,
+      purpose: q.need.goal?.slice(0, 2000),
+      include_domains: q.need.sites.map(bareDomain).filter(Boolean).join(',') || undefined,
+      exclude_domains: q.need.excludeSites.map(bareDomain).filter(Boolean).join(',') || undefined,
+      language: q.need.language?.split('-')[0],
+      location: q.need.region?.toUpperCase(),
+      domain_type: domainType,
+    }
+    if (domainType === 'research_paper') {
+      const year = (q.need.after ?? afterDate(q.need))?.slice(0, 4)
+      if (year) query.pub_year_min = Number(year)
+      if (q.need.before) query.pub_year_max = Number(q.need.before.slice(0, 4))
+    } else if (after || q.need.before) {
+      query.after_date = after
+      query.before_date = q.need.before
+    } else if (q.need.timeRange) {
+      query.recency_minutes = RECENCY_MINUTES[q.need.timeRange]
+    }
+    const data = await env.http.json(joinUrl(env.baseURL, 'https://api.search.tinyfish.ai', '/'), {
+      method: 'GET', query, headers: { 'x-api-key': key }, signal: q.signal, timeoutMs: q.timeoutMs,
+    })
+    return {
+      hits: hits(arr(data.results).slice(0, q.maxResults).map(r => hit(r.url, {
+        title: str(r.title), snippet: clip(str(r.snippet), SNIPPET), publishedAt: str(r.date) ?? (num(r.year) ? String(r.year) : undefined),
+        meta: Object.fromEntries(Object.entries({
+          publisher: str(r.publisher), venue: str(r.venue), authors: arr(r.authors).slice(0, 4).join(', ') || undefined,
+          cited_by: num(r.cited_by_count), pdf: str(r.pdf_url),
+        }).filter(([, v]) => v !== undefined)) as Record<string, string | number>,
+      }))),
+    }
+  },
+  async fetch(r, env) {
+    const key = requireKey(env.apiKey, 'TinyFish')
+    const data = await env.http.json(joinUrl(env.baseURL, 'https://api.fetch.tinyfish.ai', '/'), {
+      body: {
+        urls: [r.url], format: 'markdown', per_url_timeout_ms: Math.max(1000, Math.min(110_000, r.timeoutMs - 500)),
+        ...(r.live ? { ttl: 0 } : {}), ...(r.focus ? { purpose: r.focus.slice(0, 2000) } : {}),
+      },
+      headers: { 'x-api-key': key }, signal: r.signal, timeoutMs: r.timeoutMs,
+    })
+    const page = arr(data.results)[0]
+    if (page) return { url: r.url, finalUrl: str(page.final_url), title: str(page.title), content: typeof page.text === 'string' ? page.text : '', publishedAt: str(page.published_date) }
+    const error = arr(data.errors)[0]
+    const code = str(error?.error) ?? 'unknown'
+    if (code === 'login_required' || code === 'bot_blocked') return { url: r.url, content: '', statusCode: 403 }
+    if (code === 'page_not_found') return { url: r.url, content: '', statusCode: num(error?.status) ?? 404 }
+    if (code === 'target_http_error') return { url: r.url, content: '', statusCode: num(error?.status) ?? 502 }
+    throw new SourceError(`TinyFish: ${code}`, code === 'timeout' ? 'timeout' : code === 'invalid_url' ? 'bad_request' : 'upstream')
   },
 }

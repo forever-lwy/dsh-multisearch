@@ -72,7 +72,7 @@ export function renderFetch(outcome: FetchOutcome): string {
       const where = item.view === 'keywords'
         ? `关键词命中 ${item.matches} 处，按段落返回（已保留标题、条件与表头）`
         : `字符 ${item.range?.[0]}–${item.range?.[1]} / 共 ${item.totalChars}`
-      lines.push(`内容: ${item.generated ? '服务生成的转述（非原文，需核实）' : '网页正文'} · ${where}${item.publishedAt ? ` · 发布 ${item.publishedAt.slice(0, 10)}` : ''}`)
+      lines.push(`内容: 网页正文 · ${where}${item.publishedAt ? ` · 发布 ${item.publishedAt.slice(0, 10)}` : ''}`)
       if (item.view === 'range' && item.matches === 0) lines.push('（关键词未命中，改为返回开头部分）')
       lines.push('')
       lines.push(item.content)

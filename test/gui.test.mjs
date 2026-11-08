@@ -91,6 +91,12 @@ test('the page edits sources, saves leaf writes at the read revision, and stores
   assert.equal(save.disabled, false)
   await click(save)
   assert.deepEqual(writes.at(-1), { ops: [{ op: 'set', path: ['sources', 'exa', 'enabled'], value: true }], revision: 7 })
+  // Each capability has its own switch.
+  const fetchSwitch = card.querySelector('input[data-cap=fetch]')
+  assert.ok(card.querySelector('input[data-cap=search]').checked)
+  await click(fetchSwitch)
+  await click(host.querySelector('[data-action=save]'))
+  assert.deepEqual(writes.at(-1).ops, [{ op: 'set', path: ['sources', 'exa', 'fetch'], value: false }])
   const key = card.querySelector('input[type=password]')
   await setValue(key, 'exa-secret')
   await click([...card.querySelectorAll('button')].find(b => b.textContent === '保存密钥'))

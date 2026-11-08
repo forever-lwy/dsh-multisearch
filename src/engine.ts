@@ -91,8 +91,6 @@ export interface FetchItem {
   matches?: number
   truncated: boolean
   publishedAt?: string
-  /** Model-written rendering of the page, not verbatim text. */
-  generated?: boolean
   error?: string
 }
 
@@ -131,9 +129,12 @@ export class Engine {
       const hasKey = settings.enabled && adapter.spec.credential ? (await this.env(adapter.spec.id)).apiKey !== undefined : false
       const keyReason = adapter.spec.credential && !adapter.spec.keyOptional && !hasKey ? '缺少凭据' : undefined
       const gate = adapter.gate?.({ hasKey, baseURL: settings.baseURL, options: settings.options }) ?? {}
-      const searchReason = adapter.spec.caps.search ? gate.search ?? keyReason : '不支持搜索'
-      const fetchReason = adapter.spec.caps.fetch ? gate.fetch ?? keyReason : '不支持抓取'
-      return { spec: { ...adapter.spec, types: settings.types }, settings, usable: searchReason === undefined, fetchUsable: fetchReason === undefined, ...(searchReason ? { reason: searchReason } : {}) }
+      const searchReason = !adapter.spec.caps.search ? '不支持搜索' : !settings.search ? '已关闭搜索' : gate.search ?? keyReason
+      const fetchReason = !adapter.spec.caps.fetch ? '不支持抓取' : !settings.fetch ? '已关闭抓取' : gate.fetch ?? keyReason
+      return {
+        spec: { ...adapter.spec, types: settings.types }, settings, usable: searchReason === undefined, fetchUsable: fetchReason === undefined,
+        ...(searchReason ? { reason: searchReason } : {}), ...(fetchReason ? { fetchReason } : {}),
+      }
     }))
   }
 
@@ -409,8 +410,6 @@ export class Engine {
     const front = (predicate: (s: RoutableSource) => boolean) => { order = [...order.filter(id => predicate(usable.get(id)!)), ...order.filter(id => !predicate(usable.get(id)!))] }
     if (this.config.fetching.preferRender.some(domain => host === domain || host.endsWith(`.${domain}`))) front(s => Boolean(s.spec.caps.render))
     if (/\.pdf($|\?)/i.test(url)) front(s => Boolean(s.spec.caps.pdf))
-    // Model-mediated readers paraphrase; keep them as the last resort whatever the configured order says.
-    order = [...order.filter(id => !usable.get(id)!.spec.caps.paraphrase), ...order.filter(id => usable.get(id)!.spec.caps.paraphrase)]
     front(s => onHost(s.spec.hosts) || onHost(s.spec.fetchHosts))
     return order.slice(0, tuning.fetchFallbacks)
   }
@@ -469,7 +468,6 @@ export class Engine {
         page = {
           url, finalUrl: best.page.finalUrl, title: best.page.title, content: best.page.content, service: best.service,
           fetchedAt: Date.now(), status: best.status === 'ok' ? 'ok' : 'partial', truncated: best.status === 'partial', publishedAt: normalizeDate(best.page.publishedAt),
-          ...(best.page.generated ? { generated: true } : {}),
         }
         this.deps.cache.set(page)
       }
@@ -485,7 +483,7 @@ export class Engine {
     entry.page = page
     entry.status = page.status === 'ok' ? 'fetched' : 'partial'
     if (page.title && (entry.title === url || !entry.title)) entry.title = page.title
-    const base = { ref: entry.ref, url, finalUrl: page.finalUrl, title: page.title, service: page.service, fromCache, attempts, totalChars: page.content.length, publishedAt: page.publishedAt, ...(page.generated ? { generated: true } : {}) }
+    const base = { ref: entry.ref, url, finalUrl: page.finalUrl, title: page.title, service: page.service, fromCache, attempts, totalChars: page.content.length, publishedAt: page.publishedAt }
     if (input.keywords.length) {
       const excerpt = keywordExcerpt(page.content, input.keywords, input.contextChars, maxChars)
       if (excerpt.matches > 0) return { ...base, status: page.status, content: excerpt.text, view: 'keywords', matches: excerpt.matches, truncated: excerpt.truncated || page.truncated, ...(excerpt.ranges.length ? { range: [excerpt.ranges[0]![0], excerpt.ranges[excerpt.ranges.length - 1]![1]] as [number, number] } : {}) }

@@ -79,8 +79,6 @@ export interface FetchedPage {
   publishedAt?: string
   /** Content type when known, e.g. text/html, application/pdf. */
   contentType?: string
-  /** Content was written by a model reading the page, not extracted verbatim. */
-  generated?: boolean
 }
 
 export interface CrawlRequest {
@@ -106,8 +104,6 @@ export interface SourceCapabilities {
   /** Can render JavaScript or bypass simple blocks when fetching. */
   render?: boolean
   pdf?: boolean
-  /** Fetch output is a model's rendering of the page (Gemini URL context, OpenAI web search). */
-  paraphrase?: boolean
 }
 
 export interface SourceFilters {
@@ -156,7 +152,7 @@ export interface AdapterEnv {
 
 export interface HttpClient {
   json(url: string, init: HttpInit): Promise<any>
-  text(url: string, init: HttpInit): Promise<{ status: number; text: string; url: string; contentType: string }>
+  text(url: string, init: HttpInit): Promise<{ status: number; text: string; url: string; contentType: string; headers?: Record<string, string> }>
 }
 
 export interface HttpInit {
