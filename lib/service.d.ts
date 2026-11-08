@@ -22,7 +22,11 @@ export declare class MultisearchService extends TypertRemoteService {
     private describe;
     /** Only references the configuration actually uses may be written from the page. */
     private allowedRefs;
-    /** Credentials used outside sources: the rerank service and an own decision-model endpoint. */
+    /**
+     * Credentials used outside sources: the rerank service and an own decision-model endpoint.
+     * Preset references are always listed so the page can take a key right after switching
+     * provider, before the switch itself is saved; custom references count once saved.
+     */
     private extraRefs;
     status(request: unknown, signal: AbortSignal): Promise<MultisearchStatus>;
     setCredential(request: unknown, signal: AbortSignal): Promise<{

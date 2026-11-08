@@ -384,10 +384,10 @@ export function MultisearchSettings(props: SettingsProps) {
   const preset = RERANK_PROVIDERS[rerankProvider] ?? RERANK_PROVIDERS.custom
   const savedRerank = rerankTarget((getIn(accepted, ['rerank']) ?? {}) as any)
   const draftRerank = rerankTarget((get(['rerank']) ?? {}) as any)
-  const rerankKey = extraKey(savedRerank.apiKey)
+  // The key box follows the draft: preset references are known to the Host before the switch is saved.
+  const rerankKey = draftRerank.apiKey ? extraKey(draftRerank.apiKey) : undefined
   const backend = ((get(['decision', 'backend']) as string | undefined) ?? 'dsh') as 'dsh' | 'openai'
   const decisionRef = (get(['decision', 'apiKey']) as string | undefined) || DECISION_DEFAULT_KEY
-  const savedDecisionRef = (getIn(accepted, ['decision', 'apiKey']) as string | undefined) || DECISION_DEFAULT_KEY
   const savedBackend = (getIn(accepted, ['decision', 'backend']) as string | undefined) ?? 'dsh'
   const providerOptions = models.status === 'ready' ? models.value.providers : []
   const provider = (get(['decision', 'provider']) as string | undefined) ?? ''
@@ -430,7 +430,11 @@ export function MultisearchSettings(props: SettingsProps) {
           <Field label="重排模型" hint={preset.model ? `留空使用 ${preset.model}` : undefined}>{text(['rerank', 'model'], preset.model)}</Field>
           <Field label="凭据引用名" hint={preset.apiKey ? `留空使用 ${preset.apiKey}` : '服务需要 Key 时填写'}>{text(['rerank', 'apiKey'], preset.apiKey)}</Field>
         </div>
-        {keyEditor(rerankKey, draftRerank.apiKey === savedRerank.apiKey)}
+        {draftRerank.apiKey && !rerankKey && status.status === 'ready'
+          ? <p className="dms-warn">凭据引用名 {draftRerank.apiKey} 是新填写的，先点页面底部的“保存”，再在这里填写密钥。</p>
+          : keyEditor(rerankKey, true)}
+        {draftRerank.apiKey !== savedRerank.apiKey || (get(['rerank', 'provider']) ?? 'jina') !== (getIn(accepted, ['rerank', 'provider']) ?? 'jina')
+          ? <p className="dms-warn">供应商或凭据已改动但还没保存：密钥可以先存，记得点页面底部的“保存”让重排改用新供应商。</p> : null}
         {probeLine('rerank', '测试重排服务')}
       </fieldset>
       <fieldset>
@@ -473,9 +477,10 @@ export function MultisearchSettings(props: SettingsProps) {
           <Field label="相关性低于此值降权（0–1）">{num(['decision', 'keepThreshold'], { step: '0.05' })}</Field>
           <Field label="单批判断候选数">{num(['decision', 'maxCandidates'])}</Field>
         </div>
-        {backend === 'openai' ? (savedBackend === 'openai'
-          ? keyEditor(extraKey(savedDecisionRef), decisionRef === savedDecisionRef)
-          : <p className="dms-warn">先保存设置，再填写该接口的密钥。</p>) : null}
+        {backend === 'openai' ? (extraKey(decisionRef)
+          ? keyEditor(extraKey(decisionRef), true)
+          : status.status === 'ready' ? <p className="dms-warn">凭据引用名 {decisionRef} 是新填写的，先点页面底部的“保存”，再在这里填写密钥。</p> : null) : null}
+        {backend === 'openai' && savedBackend !== 'openai' ? <p className="dms-warn">“单独配置”还没保存：密钥可以先存，记得点页面底部的“保存”。</p> : null}
         <Field label="使用环节">
           <span className="dms-checks">{([['route', '选源'], ['rerank', '相关性重排'], ['followup', '补搜判断']] as const).map(([id, label]) => (
             <label key={id}><input type="checkbox" disabled={disabled} checked={stages.includes(id)} onChange={event => set(['decision', 'stages'], event.target.checked ? [...stages, id] : stages.filter(s => s !== id))} />{label}</label>

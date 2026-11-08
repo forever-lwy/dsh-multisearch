@@ -69,7 +69,7 @@ test('the page edits sources, saves leaf writes at the read revision, and stores
   const status = {
     sources: [{ id: 'exa', label: 'Exa', blurb: 'semantic', search: true, fetch: true, map: false, defaultTypes: ['web'], defaultPriority: 70, defaultOptions: {}, defaultEnabled: false,
       credential: { ref: 'EXA_API_KEY', optional: false, configured: false, writable: true }, searchReady: { ok: false, reason: '缺少凭据' }, fetchReady: { ok: false, reason: '缺少凭据' } }],
-    extraCredentials: [], resourceTypes: ['web', 'academic'], presets: { balanced: { returnResults: 8, rerank: true } }, defaultFetchOrder: ['keenable'],
+    extraCredentials: ['JINA_API_KEY', 'SILICONFLOW_API_KEY', 'COHERE_API_KEY', 'DECISION_API_KEY'].map(ref => ({ ref, configured: ref === 'JINA_API_KEY', writable: true })), resourceTypes: ['web', 'academic'], presets: { balanced: { returnResults: 8, rerank: true } }, defaultFetchOrder: ['keenable'],
   }
   const keyWrites = []
   const skillSaves = []
@@ -129,13 +129,24 @@ test('the page edits sources, saves leaf writes at the read revision, and stores
   await setValue(providerSelect, 'siliconflow')
   const modelInput = [...host.querySelectorAll('.dms-field')].find(f => f.textContent.startsWith('重排模型')).querySelector('input')
   assert.equal(modelInput.placeholder, 'BAAI/bge-reranker-v2-m3')
+  // Before saving, the key box already targets SiliconFlow and takes input.
+  const rerankBox = [...host.querySelectorAll('fieldset')].find(f => f.querySelector('legend')?.textContent === '结果重排')
+  const rerankKeyInput = rerankBox.querySelector('input[type=password]')
+  assert.equal(rerankKeyInput.placeholder, '输入 SILICONFLOW_API_KEY 的值')
+  assert.equal(rerankKeyInput.disabled, false)
+  assert.match(rerankBox.textContent, /还没保存/)
+  await setValue(rerankKeyInput, 'sk-sf')
+  await click([...rerankBox.querySelectorAll('button')].find(b => b.textContent === '保存密钥'))
+  assert.deepEqual(keyWrites.at(-1), ['SILICONFLOW_API_KEY', 'sk-sf'])
   await click(host.querySelector('[data-action=save]'))
   assert.deepEqual(writes.at(-1).ops, [{ op: 'set', path: ['rerank', 'provider'], value: 'siliconflow' }])
   // Own OpenAI-compatible endpoint for the decision model.
   const backendSelect = [...host.querySelectorAll('.dms-field')].find(f => f.textContent.startsWith('供应商来源')).querySelector('select')
   await setValue(backendSelect, 'openai')
   assert.ok([...host.querySelectorAll('.dms-field')].some(f => f.textContent.startsWith('接口地址')))
-  assert.match(host.textContent, /先保存设置，再填写该接口的密钥/)
+  const decisionBox = [...host.querySelectorAll('fieldset')].find(f => f.querySelector('legend')?.textContent.startsWith('决策模型'))
+  assert.equal(decisionBox.querySelector('input[type=password]').placeholder, '输入 DECISION_API_KEY 的值')
+  assert.equal(decisionBox.querySelector('input[type=password]').disabled, false)
   await click([...host.querySelectorAll('.dms-actions button')].find(b => b.textContent === '放弃修改'))
   // The skill file is edited in place through the remote, outside the settings draft.
   await click([...host.querySelectorAll('[role=tab]')].find(b => b.textContent === '深度研究'))

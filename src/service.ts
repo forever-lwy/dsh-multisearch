@@ -8,7 +8,7 @@ import { RESOURCE_TYPES } from './types.js'
 import { SERVICE, credentialRequestSchema, skillSaveSchema, type MultisearchStatus, type ProviderModels, type SkillStatus } from './remote.js'
 import type { SkillFile } from './skillfile.js'
 import type { DecisionModel } from './decision.js'
-import { DECISION_DEFAULT_KEY, rerankTarget } from './presets.js'
+import { DECISION_DEFAULT_KEY, RERANK_PROVIDERS, rerankTarget } from './presets.js'
 import { rerankService } from './sources/index.js'
 import type { ProbeResult } from './remote.js'
 
@@ -53,12 +53,17 @@ export class MultisearchService extends TypertRemoteService {
     return refs
   }
 
-  /** Credentials used outside sources: the rerank service and an own decision-model endpoint. */
+  /**
+   * Credentials used outside sources: the rerank service and an own decision-model endpoint.
+   * Preset references are always listed so the page can take a key right after switching
+   * provider, before the switch itself is saved; custom references count once saved.
+   */
   private extraRefs(config: Config): string[] {
     const refs: string[] = []
     const rerank = rerankTarget(config.rerank).apiKey
     if (rerank) refs.push(rerank)
-    if ((config.decision.backend ?? 'dsh') === 'openai') refs.push(config.decision.apiKey || DECISION_DEFAULT_KEY)
+    for (const preset of Object.values(RERANK_PROVIDERS)) if (preset.apiKey) refs.push(preset.apiKey)
+    refs.push(config.decision.apiKey || DECISION_DEFAULT_KEY, DECISION_DEFAULT_KEY)
     return [...new Set(refs)]
   }
 

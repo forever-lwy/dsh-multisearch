@@ -496,7 +496,9 @@ test('settings service: rerank and decision keys are writable; test buttons repo
   const service = new Plugin.MultisearchService(ctx, engine, () => config, undefined, { decision, llm: () => undefined, resolveKey })
   const signal = new AbortController().signal
   const status = await service.status({}, signal)
-  assert.deepEqual(status.extraCredentials.map(c => c.ref), ['SILICONFLOW_API_KEY', 'DECISION_API_KEY'])
+  assert.deepEqual(status.extraCredentials.map(c => c.ref), ['SILICONFLOW_API_KEY', 'JINA_API_KEY', 'COHERE_API_KEY', 'DECISION_API_KEY'])
+  // A preset key can be written before the provider switch is saved.
+  assert.deepEqual(await service.setCredential({ ref: 'COHERE_API_KEY', value: 'co' }, signal), { configured: true })
   assert.deepEqual(await service.setCredential({ ref: 'DECISION_API_KEY', value: 'new' }, signal), { configured: true })
   const rerank = await service.testRerank({}, signal)
   assert.equal(rerank.ok, true, rerank.detail)
