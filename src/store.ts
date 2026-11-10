@@ -1,4 +1,4 @@
-/** Task-scoped memory: stable reference ids, candidates of each search, fetched pages; plus a shared page cache. */
+/** Task-scoped memory: stable reference ids and candidates of each search; page texts live only in the shared page cache. */
 import type { Candidate, ReadStatus, SearchNeed } from './types.js'
 import { urlKey } from './text.js'
 
@@ -22,7 +22,6 @@ export interface RefEntry {
   sources: string[]
   publishedAt?: string
   status: ReadStatus
-  page?: PageRecord
 }
 
 export interface SearchRecord {
@@ -126,11 +125,11 @@ export class StoreRegistry {
     if (!store) {
       store = new TaskStore()
       this.stores.set(taskId, store)
-      const now = Date.now()
-      for (const [id, s] of this.stores) if (now - s.lastUsed > this.idleMs) this.stores.delete(id)
-      while (this.stores.size > this.capacity) this.stores.delete(this.stores.keys().next().value!)
     }
-    store.lastUsed = Date.now()
+    const now = Date.now()
+    store.lastUsed = now
+    for (const [id, s] of this.stores) if (now - s.lastUsed > this.idleMs) this.stores.delete(id)
+    while (this.stores.size > this.capacity) this.stores.delete(this.stores.keys().next().value!)
     return store
   }
 }
