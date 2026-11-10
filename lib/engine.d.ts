@@ -159,6 +159,7 @@ export declare class Engine {
     fetch(input: FetchInput, store: TaskStore, signal: AbortSignal): Promise<FetchOutcome>;
     private fetchOrder;
     private assess;
+    /** `pages` collects this call's full page texts (budget cuts, link discovery); between calls only the shared page cache holds them. */
     private fetchOne;
     /** The part of a page returned to the model: matching sections for keywords, else a range from `offset`. */
     private pageView;
@@ -166,7 +167,7 @@ export declare class Engine {
      * Fit one call's returned text into `budget` (≈ tokens) so the host does not spill it to a file.
      * Water-filling: pages are served smallest first and kept whole while they fit an equal share of
      * what is left; the rest split the remainder evenly and are cut at a block boundary, keeping the
-     * offset to continue. Full text stays in the task store, so continuing does not refetch.
+     * offset to continue. Full text stays in the shared page cache, so continuing does not refetch while it is fresh.
      */
     private applyBudget;
     /** Site discovery: a map service when available, else a bounded breadth-first walk over fetched pages. */

@@ -1,4 +1,4 @@
-/** Task-scoped memory: stable reference ids, candidates of each search, fetched pages; plus a shared page cache. */
+/** Task-scoped memory: stable reference ids and candidates of each search; page texts live only in the shared page cache. */
 import type { Candidate, ReadStatus, SearchNeed } from './types.js';
 export interface PageRecord {
     url: string;
@@ -19,7 +19,6 @@ export interface RefEntry {
     sources: string[];
     publishedAt?: string;
     status: ReadStatus;
-    page?: PageRecord;
 }
 export interface SearchRecord {
     id: string;

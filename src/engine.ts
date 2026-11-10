@@ -310,7 +310,7 @@ export class Engine {
       sources: candidate ? [...candidate.ranks.keys()] : entry.sources,
       ...(entry.publishedAt ? { publishedAt: entry.publishedAt } : {}),
       ...(candidate?.version ? { version: candidate.version } : {}),
-      kind: entry.page ? 'page' : 'snippet', readStatus: entry.status,
+      kind: entry.status === 'fetched' || entry.status === 'partial' ? 'page' : 'snippet', readStatus: entry.status,
       flags: candidate ? [...candidate.flags] : [],
       ...(candidate?.alsoAt.length ? { alsoAt: candidate.alsoAt.slice(0, 3) } : {}),
       ...(candidate && Object.keys(candidate.meta).length ? { meta: candidate.meta } : {}),
@@ -407,8 +407,9 @@ export class Engine {
       targets = [targets[0]!, ...links.map(link => link.url)].filter((url, i, all) => all.indexOf(url) === i).slice(0, crawl.maxPages)
     }
     const perPage = input.crawl ? Math.max(1500, Math.floor(maxChars * 2 / Math.max(1, targets.length))) : maxChars
-    const items = await pool(targets, tuning.fetchConcurrency, target => this.fetchOne(target, input, perPage, tuning, sources, store, deadline, started))
-    const budgeted = this.applyBudget(items, input, store, tuning.fetchTotalTokens)
+    const pages = new Map<string, PageRecord>()
+    const items = await pool(targets, tuning.fetchConcurrency, target => this.fetchOne(target, input, perPage, tuning, sources, store, deadline, started, pages))
+    const budgeted = this.applyBudget(items, input, pages, tuning.fetchTotalTokens)
     const stop: StopReason = signal.aborted ? 'cancelled' : deadline.aborted ? 'timeout' : items.some(i => i.status !== 'ok') ? 'partial' : 'completed'
     return { items, ...(map ? { map } : {}), ...(budgeted ? { budgetTokens: tuning.fetchTotalTokens } : {}), elapsedMs: Date.now() - started, stop }
   }
@@ -436,7 +437,8 @@ export class Engine {
     return 'ok'
   }
 
-  private async fetchOne(target: string, input: FetchInput, maxChars: number, tuning: Tuning, sources: RoutableSource[], store: TaskStore, deadline: AbortSignal, started: number): Promise<FetchItem> {
+  /** `pages` collects this call's full page texts (budget cuts, link discovery); between calls only the shared page cache holds them. */
+  private async fetchOne(target: string, input: FetchInput, maxChars: number, tuning: Tuning, sources: RoutableSource[], store: TaskStore, deadline: AbortSignal, started: number, pages: Map<string, PageRecord>): Promise<FetchItem> {
     const ref = /^S\d+$/i.test(target.trim()) ? store.get(target.trim()) : undefined
     if (/^S\d+$/i.test(target.trim()) && !ref) return { url: target, status: 'failed', fromCache: false, attempts: [], content: '', view: 'none', totalChars: 0, truncated: false, error: `未知引用 ${target}（只在当前任务内有效）` }
     const url = ref?.url ?? target.trim()
@@ -447,7 +449,7 @@ export class Engine {
     let page: PageRecord | undefined
     let fromCache = false
     if (!input.live) {
-      const known = entry.page && Date.now() - entry.page.fetchedAt <= ttl ? entry.page : this.deps.cache.get(url, ttl)
+      const known = this.deps.cache.get(url, ttl)
       if (known) { page = known; fromCache = true }
     }
     let best: { page: FetchedPage; status: PageStatus; service: string } | undefined
@@ -493,7 +495,7 @@ export class Engine {
         : last?.status === 'timeout' ? 'timeout' : 'failed'
       return { ref: entry.ref, url, status, fromCache: false, attempts, content: '', view: 'none', totalChars: 0, truncated: false, error: attempts.length ? undefined : '没有可用的抓取服务' }
     }
-    entry.page = page
+    pages.set(urlKey(url), page)
     entry.status = page.status === 'ok' ? 'fetched' : 'partial'
     if (page.title && (entry.title === url || !entry.title)) entry.title = page.title
     const base = { ref: entry.ref, url, finalUrl: page.finalUrl, title: page.title, service: page.service, fromCache, attempts, totalChars: page.content.length, publishedAt: page.publishedAt }
@@ -519,9 +521,9 @@ export class Engine {
    * Fit one call's returned text into `budget` (≈ tokens) so the host does not spill it to a file.
    * Water-filling: pages are served smallest first and kept whole while they fit an equal share of
    * what is left; the rest split the remainder evenly and are cut at a block boundary, keeping the
-   * offset to continue. Full text stays in the task store, so continuing does not refetch.
+   * offset to continue. Full text stays in the shared page cache, so continuing does not refetch while it is fresh.
    */
-  private applyBudget(items: FetchItem[], input: FetchInput, store: TaskStore, budget: number): boolean {
+  private applyBudget(items: FetchItem[], input: FetchInput, pages: Map<string, PageRecord>, budget: number): boolean {
     if (budget <= 0) return false
     const sized = items.map((item, index) => ({ index, item, cost: estimateTokens(item.content) })).filter(x => x.item.content !== '')
     if (sized.reduce((sum, x) => sum + x.cost, 0) + FETCH_ITEM_OVERHEAD * items.length <= budget) return false
@@ -537,7 +539,7 @@ export class Engine {
     let cut = false
     for (const [index, tokens] of share) {
       const item = items[index]!
-      const page = item.ref ? store.get(item.ref)?.page : undefined
+      const page = pages.get(urlKey(item.url))
       if (!page) continue
       const charsPerToken = item.content.length / Math.max(1, estimateTokens(item.content))
       const chars = Math.max(FETCH_MIN_CHARS, Math.floor(tokens * charsPerToken))
@@ -577,9 +579,10 @@ export class Engine {
     let frontier = [startUrl]
     for (let depth = 0; depth < crawl.maxDepth && frontier.length && out.length < limit && !deadline.aborted; depth++) {
       const next: string[] = []
-      const pages = await pool(frontier.slice(0, 8), tuning.fetchConcurrency, url => this.fetchOne(url, { targets: [], keywords: [], offset: 0, contextChars: 0, live: false, services: [], tuning: {} }, 200_000, tuning, sources, store, deadline, Date.now()))
+      const held = new Map<string, PageRecord>()
+      const pages = await pool(frontier.slice(0, 8), tuning.fetchConcurrency, url => this.fetchOne(url, { targets: [], keywords: [], offset: 0, contextChars: 0, live: false, services: [], tuning: {} }, 200_000, tuning, sources, store, deadline, Date.now(), held))
       for (const [index, item] of pages.entries()) {
-        const full = store.byUrl(frontier[index]!)?.page?.content ?? item.content
+        const full = held.get(urlKey(frontier[index]!))?.content ?? item.content
         for (const link of markdownLinks(full, item.finalUrl ?? frontier[index]!)) {
           const key = urlKey(link.url)
           if (seen.has(key) || !allowed(link.url)) continue

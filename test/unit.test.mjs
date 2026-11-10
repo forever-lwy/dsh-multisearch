@@ -266,3 +266,15 @@ test('source count: profile, decision model and call parameter, always within th
   const plain = snapshotConfig(Config({ limits: { maxParallelSources: 3 } }))
   assert.deepEqual(sourceCount(plain, effectiveTuning(plain, 'fast', {}), {}), { count: 1, min: 1, max: 3, by: 'profile' })
 })
+
+test('task stores: idle ones expire on any call, not only when a new task starts; refs hold no page text', async () => {
+  const { StoreRegistry, TaskStore } = await import('../lib/store.js')
+  const registry = new StoreRegistry(1000, 10)
+  const old = registry.for('a')
+  const live = registry.for('b')
+  old.lastUsed = Date.now() - 5000
+  assert.equal(registry.for('b'), live)
+  assert.notEqual(registry.for('a'), old)
+  const entry = new TaskStore().refFor({ url: 'https://x.com/p', title: 't', snippet: 's' })
+  assert.equal('page' in entry, false)
+})
